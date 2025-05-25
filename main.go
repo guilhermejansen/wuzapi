@@ -62,6 +62,11 @@ func init() {
 
 	flag.Parse()
 
+	// Novo bloco para sobrescrever o osName pelo ENV, se existir
+	if v := os.Getenv("SESSION_DEVICE_NAME"); v != "" {
+		*osName = v
+	}
+
 	if *versionFlag {
 		fmt.Printf("WuzAPI version %s\n", version)
 		os.Exit(0)

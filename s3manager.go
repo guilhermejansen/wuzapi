@@ -25,6 +25,7 @@ type S3Config struct {
 	SecretKey     string
 	PathStyle     bool
 	PublicURL     string
+	MediaDelivery string
 	RetentionDays int
 }
 
@@ -311,4 +312,63 @@ func (m *S3Manager) ProcessMediaForS3(ctx context.Context, userID, contactJID, m
 	}
 
 	return s3Data, nil
+}
+
+// DeleteAllUserObjects deletes all user files from S3
+func (m *S3Manager) DeleteAllUserObjects(ctx context.Context, userID string) error {
+	client, config, ok := m.GetClient(userID)
+	if !ok {
+		return fmt.Errorf("S3 client not initialized for user %s", userID)
+	}
+
+	prefix := fmt.Sprintf("users/%s/", userID)
+	var toDelete []types.ObjectIdentifier
+	var continuationToken *string
+
+	for {
+		input := &s3.ListObjectsV2Input{
+			Bucket:            aws.String(config.Bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: continuationToken,
+		}
+		output, err := client.ListObjectsV2(ctx, input)
+		if err != nil {
+			return fmt.Errorf("failed to list objects for user %s: %w", userID, err)
+		}
+
+		for _, obj := range output.Contents {
+			toDelete = append(toDelete, types.ObjectIdentifier{Key: obj.Key})
+			// Delete in batches of 1000 (S3 limit)
+			if len(toDelete) == 1000 {
+				_, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+					Bucket: aws.String(config.Bucket),
+					Delete: &types.Delete{Objects: toDelete},
+				})
+				if err != nil {
+					return fmt.Errorf("failed to delete objects for user %s: %w", userID, err)
+				}
+				toDelete = nil
+			}
+		}
+
+		if output.IsTruncated != nil && *output.IsTruncated && output.NextContinuationToken != nil {
+			continuationToken = output.NextContinuationToken
+		} else {
+			break
+		}
+	}
+
+	// Delete any remaining objects
+	if len(toDelete) > 0 {
+		_, err := client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: aws.String(config.Bucket),
+			Delete: &types.Delete{Objects: toDelete},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to delete objects for user %s: %w", userID, err)
+		}
+	}
+
+	log.Info().Str("userID", userID).Msg("all user files removed from S3")
+	return nil
 }

@@ -911,6 +911,20 @@ a#menulogout, a:visited#menulogout {
     margin: 0 !important;
 }
 
+/* Proxy Configuration Styles */
+#proxyUrlField {
+  display: none;
+}
+
+#proxyUrlField.show {
+  display: block;
+}
+
+/* S3 Configuration Styles */
+#deleteS3Config {
+  display: none;
+}
+
 /* Mobile Responsiveness for Group Management */
 @media (max-width: 768px) {
     .ui.modal#modalGroupDetails .actions .ui.stackable.grid .column {

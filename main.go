@@ -34,17 +34,18 @@ type server struct {
 
 // Replace the global variables
 var (
-	address     = flag.String("address", "0.0.0.0", "Bind IP Address")
-	port        = flag.String("port", "8080", "Listen Port")
-	waDebug     = flag.String("wadebug", "", "Enable whatsmeow debug (INFO or DEBUG)")
-	logType     = flag.String("logtype", "console", "Type of log output (console or json)")
-	skipMedia   = flag.Bool("skipmedia", false, "Do not attempt to download media in messages")
-	osName      = flag.String("osname", "Mac OS 10", "Connection OSName in Whatsapp")
-	colorOutput = flag.Bool("color", false, "Enable colored output for console logs")
-	sslcert     = flag.String("sslcertificate", "", "SSL Certificate File")
-	sslprivkey  = flag.String("sslprivatekey", "", "SSL Certificate Private Key File")
-	adminToken  = flag.String("admintoken", "", "Security Token to authorize admin actions (list/create/remove users)")
-	versionFlag = flag.Bool("version", false, "Display version information and exit")
+	address       = flag.String("address", "0.0.0.0", "Bind IP Address")
+	port          = flag.String("port", "8080", "Listen Port")
+	waDebug       = flag.String("wadebug", "", "Enable whatsmeow debug (INFO or DEBUG)")
+	logType       = flag.String("logtype", "console", "Type of log output (console or json)")
+	skipMedia     = flag.Bool("skipmedia", false, "Do not attempt to download media in messages")
+	osName        = flag.String("osname", "Mac OS 10", "Connection OSName in Whatsapp")
+	colorOutput   = flag.Bool("color", false, "Enable colored output for console logs")
+	sslcert       = flag.String("sslcertificate", "", "SSL Certificate File")
+	sslprivkey    = flag.String("sslprivatekey", "", "SSL Certificate Private Key File")
+	adminToken    = flag.String("admintoken", "", "Security Token to authorize admin actions (list/create/remove users)")
+	globalWebhook = flag.String("globalwebhook", "", "Global webhook URL to receive all events from all users")
+	versionFlag   = flag.Bool("version", false, "Display version information and exit")
 
 	container     *sqlstore.Container
 	clientManager = NewClientManager()
@@ -134,6 +135,16 @@ func init() {
 			*adminToken = string(b)
 			log.Warn().Str("admin_token", *adminToken).Msg("No admin token provided, generated a random one")
 		}
+	}
+
+	// Check for global webhook in environment variable
+	if *globalWebhook == "" {
+		if v := os.Getenv("WUZAPI_GLOBAL_WEBHOOK"); v != "" {
+			*globalWebhook = v
+			log.Info().Str("global_webhook", v).Msg("Global webhook configured from environment variable")
+		}
+	} else {
+		log.Info().Str("global_webhook", *globalWebhook).Msg("Global webhook configured from command line")
 	}
 }
 

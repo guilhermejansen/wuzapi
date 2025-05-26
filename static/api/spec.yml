@@ -30,7 +30,7 @@ paths:
     post:
       tags:
         - Admin
-      summary: Add a new user
+      summary: Create a new user
       description: Add a new user to the database.
       security:
         - AdminAuth: []
@@ -46,7 +46,28 @@ paths:
           content:
             application/json:
               schema:
-                example: {"code":201,"data":{"id":"5663e0c52063ec35d0ba45f7c2011c06","name":"John Doe"},"success":true}
+                $ref: '#/definitions/User'
+              example:
+                code: 201
+                data:
+                  id: "5663e0c52063ec35d0ba45f7c2011c06"
+                  name: "John Doe"
+                  token: "1234ABCD"
+                  webhook: "https://webhook.site/1234567890"
+                  events: "All"
+                  proxy_config:
+                    enabled: true
+                    proxy_url: "https://serverproxy.com:9080"
+                  s3_config:
+                    enabled: true
+                    endpoint: "https://s3.amazonaws.com"
+                    region: "us-east-1"
+                    bucket: "my-bucket"
+                    access_key: "***"
+                    path_style: true
+                    public_url: "https://s3.amazonaws.com"
+                    media_delivery: "both"
+                    retention_days: 30
   /admin/users/{id}:
     delete:
       tags:
@@ -74,8 +95,8 @@ paths:
     delete:
       tags:
         - Admin
-      summary: Delete a user from DB, logout and disconnect from whatsapp and clear it up from memory
-      description: Deletes a user by their ID, including login out, disconnect and memory cleanup.
+      summary: Delete a user from DB and S3, logout and disconnect from whatsapp and clear it up from memory
+      description: Deletes a user by their ID, including login out, disconnect and memory cleanup Also removes all user files from S3.
       security:
         - AdminAuth: []
       parameters:
@@ -884,6 +905,48 @@ paths:
             application/json:
               schema:
                 example: {"code":200,"data":{"Details":"Sent","Id":"90B2F8B13FAC8A9CF6B06E99C7834DC5","Timestamp":"2022-04-20T12:49:08-03:00"},"success":true}
+  /chat/send/buttons:
+    post:
+      tags:
+        - Chat
+      summary: Sends a Buttons message
+      description: Sends a Buttons message
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/MessageButtons'
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: {"code":200,"data":{"Details":"Sent","Id":"90B2F8B13FAC8A9CF6B06E99C7834DC5","Timestamp":"2022-04-20T12:49:08-03:00"},"success":true}
+  /chat/send/list:
+    post:
+      tags:
+        - Chat
+      summary: Sends a List message
+      description: Sends a List message
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/MessageList'
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: {"code":200,"data":{"Details":"Sent","Id":"90B2F8B13FAC8A9CF6B06E99C7834DC5","Timestamp":"2022-04-20T12:49:08-03:00"},"success":true}
   /chat/send/poll:
     post:
       tags:
@@ -1323,6 +1386,54 @@ definitions:
       name:
         type: string
         example: John Doe
+      token:
+        type: string
+        example: "1234ABCD"
+      webhook:
+        type: string
+        example: "https://webhook.site/1234567890"
+      events:
+        type: string
+        example: "All"
+      proxy_config:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            example: true
+          proxy_url:
+            type: string
+            example: "https://serverproxy.com:9080"
+      s3_config:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            example: true
+          endpoint:
+            type: string
+            example: "https://s3.amazonaws.com"
+          region:
+            type: string
+            example: "us-east-1"
+          bucket:
+            type: string
+            example: "my-bucket"
+          access_key:
+            type: string
+            example: "***"
+          path_style:
+            type: boolean
+            example: true
+          public_url:
+            type: string
+            example: "https://s3.amazonaws.com"
+          media_delivery:
+            type: string
+            example: "both"
+          retention_days:
+            type: integer
+            example: 30
 
   CreateUser:
     type: object
@@ -1336,6 +1447,63 @@ definitions:
       token:
         type: string
         example: "1234ABCD"
+      webhook:
+        type: string
+        example: "https://webhook.site/1234567890"
+        description: "Webhook URL to receive events"
+      events:
+        type: string
+        example: "All"
+        description: "Events to subscribe to. Ex: 'All', 'Message', 'Presence'"
+      proxyConfig:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            example: true
+            description: "Enable proxy for the user, default is false"
+          proxyURL:
+            type: string
+            example: "https://serverproxy.com:9080"
+            description: "Proxy URL to use for the user. Format: socks5://user:pass@host:port or http://host:port"
+      s3Config:
+        type: object
+        properties:
+          enabled:
+            type: boolean
+            example: true
+            description: "Enable S3 for the user, default is false"
+          endpoint:
+            type: string
+            example: "https://s3.amazonaws.com"
+          region:
+            type: string
+            example: "us-east-1"
+          bucket:
+            type: string
+            example: "my-bucket"
+          accessKey:
+            type: string
+            example: "1234567890"
+          secretKey:
+            type: string
+            example: "1234567890"
+          pathStyle:
+            type: boolean
+            example: true
+            description: "Enable path style for the user, default is false"
+          publicURL:
+            type: string
+            example: "https://s3.amazonaws.com"
+            description: "Public URL for the user"
+          mediaDelivery:
+            type: string
+            example: "both"
+            description: "Media delivery type for the user, default is both"
+          retentionDays:
+            type: integer
+            example: 30
+            description: "Retention days for the user, default is 30"
 
   DeleteUser:
     type: object
@@ -1528,6 +1696,73 @@ definitions:
       Id:
         type: string
         example: "3EB06F9067F80BAB89FF"
+
+  MessageList:
+    type: object
+    required:
+      - Phone
+      - ButtonText
+      - Desc
+      - TopText
+      - List
+    properties:
+      Phone:
+        type: string
+        example: "5521971532700"
+      ButtonText:
+        type: string
+        example: Click Here
+      Desc:
+        type: string
+        example: This is a list
+      TopText:
+        type: string
+        example: This is a list
+      FooterText:
+        type: string
+        example: This is a footer text
+      List:
+        type: array
+        items:
+          type: object
+          properties:
+            title:
+              type: string
+              example: menu button 1
+            desc:
+              type: string
+              example: long description
+            RowId:
+              type: string
+              example: 1
+
+  MessageButtons:
+    type: object
+    required:
+      - Phone
+      - Body
+    properties:
+      Phone:
+        type: string
+        example: "5521971532700"
+      Body:
+        type: string
+        example: How you doin
+      Id:
+        type: string
+        example: "ABCDABCD1234"
+      ContextInfo:
+        type: object
+        required:
+          - StanzaId
+          - Participant
+        properties:
+          StanzaId: 
+            type: string
+            example: "3EB06F9067F80BAB89FF" 
+          Participant: 
+            type: string
+            example: "5491155553935@s.whatsapp.net"
 
   MessageText:
     type: object

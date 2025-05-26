@@ -44,7 +44,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"test_user\",\n  \"token\": \"user_token\"\n}"
+              "raw": "{\n  \"name\": \"test_user\",\n  \"token\": \"user_token\",\n  \"webhook\": \"https://webhook.site/1234567890\",\n  \"events\": \"All\",\n  \"proxyConfig\": {\n    \"enabled\": true,\n    \"proxyURL\": \"socks5://user:pass@host:port\"\n  }, \n  \"s3Config\": {\n    \"enabled\": true,\n    \"endpoint\": \"https://s3.amazonaws.com\",\n    \"region\": \"us-east-1\",\n    \"bucket\": \"my-bucket\",\n    \"accessKey\": \"AKIAIOSFODNN7EXAMPLE\",\n    \"secretKey\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\",\n    \"pathStyle\": false,\n    \"publicURL\": \"https://cdn.meusite.com\",\n    \"mediaDelivery\": \"both\",\n    \"retentionDays\": 30\n  }\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/admin/users",

@@ -149,6 +149,52 @@ The JSON body for creating a new user must contain:
 - `events` [string] : Comma-separated list of events to receive (required) - Valid events are: "Message", "ReadReceipt", "Presence", "HistorySync", "ChatPresence", "All"
 - `expiration` [int] : Expiration timestamp (optional, not enforced by the system)
 
+## User Creation with Optional Proxy and S3 Configuration
+
+You can create a user with optional proxy and S3 storage configuration. All fields are optional and backward compatible. If you do not provide these fields, the user will be created with default settings.
+
+### Example Payload
+
+```json
+{
+  "name": "test_user",
+  "token": "user_token",
+  "proxyConfig": {
+    "enabled": true,
+    "proxyURL": "socks5://user:pass@host:port"
+  },
+  "s3Config": {
+    "enabled": true,
+    "endpoint": "https://s3.amazonaws.com",
+    "region": "us-east-1",
+    "bucket": "my-bucket",
+    "accessKey": "AKIAIOSFODNN7EXAMPLE",
+    "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "pathStyle": false,
+    "publicURL": "https://cdn.yoursite.com",
+    "mediaDelivery": "both",
+    "retentionDays": 30
+  }
+}
+```
+
+- `proxyConfig` (object, optional):
+  - `enabled` (boolean): Enable proxy for this user.
+  - `proxyURL` (string): Proxy URL (e.g., `socks5://user:pass@host:port`).
+- `s3Config` (object, optional):
+  - `enabled` (boolean): Enable S3 storage for this user.
+  - `endpoint` (string): S3 endpoint URL.
+  - `region` (string): S3 region.
+  - `bucket` (string): S3 bucket name.
+  - `accessKey` (string): S3 access key.
+  - `secretKey` (string): S3 secret key.
+  - `pathStyle` (boolean): Use path style addressing.
+  - `publicURL` (string): Public URL for accessing files.
+  - `mediaDelivery` (string): Media delivery type (`base64`, `s3`, or `both`).
+  - `retentionDays` (integer): Number of days to retain files.
+
+If you omit `proxyConfig` or `s3Config`, the user will be created without proxy or S3 integration, maintaining full backward compatibility.
+
 ## API reference 
 
 API calls should be made with content type json, and parameters sent into the

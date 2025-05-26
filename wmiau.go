@@ -77,20 +77,19 @@ func (s *server) connectOnStartup() {
 			eventarray := strings.Split(events, ",")
 
 			var subscribedEvents []string
-			if len(eventarray) < 1 {
-				if !Find(subscribedEvents, "All") {
-					subscribedEvents = append(subscribedEvents, "All")
-				}
+			if len(eventarray) == 1 && eventarray[0] == "" {
+				subscribedEvents = []string{}
 			} else {
 				for _, arg := range eventarray {
-					if !Find(messageTypes, arg) {
-						log.Warn().Str("Type", arg).Msg("Message type discarded")
+					if !Find(supportedEventTypes, arg) {
+						log.Warn().Str("Type", arg).Msg("Event type discarded")
 						continue
 					}
 					if !Find(subscribedEvents, arg) {
 						subscribedEvents = append(subscribedEvents, arg)
 					}
 				}
+
 			}
 			eventstring := strings.Join(subscribedEvents, ",")
 			log.Info().Str("events", eventstring).Str("jid", jid).Msg("Attempt to connect")
@@ -206,11 +205,6 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 
 	// Now we can use the client with the manager
 	clientManager.SetWhatsmeowClient(userID, client)
-
-	// When deleting clients
-	// clientManager.DeleteWhatsmeowClient(userID)
-	// clientManager.DeleteHTTPClient(userID)
-
 	if textjid != "" {
 		jid, _ := parseJID(textjid)
 		deviceStore, err = container.GetDevice(context.Background(), jid)
@@ -228,6 +222,9 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 	clientManager.SetWhatsmeowClient(userID, client)
 	mycli := MyClient{client, 1, userID, token, subscriptions, s.db}
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
+
+	// CORREÇÃO: Armazenar o MyClient no clientManager
+	clientManager.SetMyClient(userID, &mycli)
 
 	httpClient := resty.New()
 	httpClient.SetRedirectPolicy(resty.FlexibleRedirectPolicy(15))
@@ -306,6 +303,8 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 					}
 					log.Warn().Msg("QR timeout killing channel")
 					clientManager.DeleteWhatsmeowClient(userID)
+					clientManager.DeleteMyClient(userID)
+					clientManager.DeleteHTTPClient(userID)
 					killchannel[userID] <- true
 				} else if evt.Event == "success" {
 					log.Info().Msg("QR pairing ok!")
@@ -342,6 +341,8 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 			log.Info().Str("userid", userID).Msg("Received kill signal")
 			client.Disconnect()
 			clientManager.DeleteWhatsmeowClient(userID)
+			clientManager.DeleteMyClient(userID)
+			clientManager.DeleteHTTPClient(userID)
 			sqlStmt := `UPDATE users SET qrcode='', connected=0 WHERE id=$1`
 			_, err := s.db.Exec(sqlStmt, "", userID)
 			if err != nil {
@@ -912,43 +913,101 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			webhookurl = myuserinfo.(Values).Get("Webhook")
 		}
 
-		if !Find(mycli.subscriptions, postmap["type"].(string)) && !Find(mycli.subscriptions, "All") {
-			log.Warn().Str("type", postmap["type"].(string)).Msg("Skipping webhook. Not subscribed for this type")
+		// Get updated events from cache/database
+		currentEvents := ""
+		userinfo2, found2 := userinfocache.Get(mycli.token)
+		if found2 {
+			currentEvents = userinfo2.(Values).Get("Events")
+		} else {
+			// If not in cache, get from database
+			var err error
+			err = mycli.db.Get(&currentEvents, "SELECT events FROM users WHERE id=$1", mycli.userID)
+			if err != nil {
+				log.Warn().Err(err).Msg("Could not get events from DB")
+			}
+		}
+
+		// Update client subscriptions if changed
+		eventarray := strings.Split(currentEvents, ",")
+		var subscribedEvents []string
+		if len(eventarray) == 1 && eventarray[0] == "" {
+			subscribedEvents = []string{}
+		} else {
+			for _, arg := range eventarray {
+				arg = strings.TrimSpace(arg)
+				if arg != "" && Find(supportedEventTypes, arg) {
+					subscribedEvents = append(subscribedEvents, arg)
+				}
+			}
+		}
+
+		// Update the client subscriptions
+		mycli.subscriptions = subscribedEvents
+
+		// Log subscription details for debugging
+		log.Debug().
+			Str("userID", mycli.userID).
+			Str("eventType", postmap["type"].(string)).
+			Strs("subscribedEvents", subscribedEvents).
+			Msg("Checking event subscription")
+
+		// Check if the current event is in the subscriptions
+		if !Find(subscribedEvents, postmap["type"].(string)) && !Find(subscribedEvents, "All") {
+			log.Warn().
+				Str("type", postmap["type"].(string)).
+				Strs("subscribedEvents", subscribedEvents).
+				Str("userID", mycli.userID).
+				Msg("Skipping webhook. Not subscribed for this type")
 			return
 		}
 
+		// Prepare webhook data
+		jsonData, err := json.Marshal(postmap)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to marshal postmap to JSON")
+			return
+		}
+
+		data := map[string]string{
+			"jsonData": string(jsonData),
+			"token":    mycli.token,
+		}
+
+		// Add this log
+		log.Debug().Interface("webhookData", data).Msg("Data being sent to webhook")
+
+		// Call user webhook if configured
 		if webhookurl != "" {
-			log.Info().Str("url", webhookurl).Msg("Calling webhook")
-			jsonData, err := json.Marshal(postmap)
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to marshal postmap to JSON")
+			log.Info().Str("url", webhookurl).Msg("Calling user webhook")
+			if path == "" {
+				go callHook(webhookurl, data, mycli.userID)
 			} else {
-				data := map[string]string{
-					"jsonData": string(jsonData),
-					"token":    mycli.token,
-				}
+				// Create a channel to capture the error from the goroutine
+				errChan := make(chan error, 1)
+				go func() {
+					err := callHookFile(webhookurl, data, mycli.userID, path)
+					errChan <- err
+				}()
 
-				// Adicione este log
-				log.Debug().Interface("webhookData", data).Msg("Data being sent to webhook")
-
-				if path == "" {
-					go callHook(webhookurl, data, mycli.userID)
-				} else {
-					// Create a channel to capture error from the goroutine
-					errChan := make(chan error, 1)
-					go func() {
-						err := callHookFile(webhookurl, data, mycli.userID, path)
-						errChan <- err
-					}()
-
-					// Optionally handle the error from the channel
-					if err := <-errChan; err != nil {
-						log.Error().Err(err).Msg("Error calling hook file")
-					}
+				// Optionally handle the error from the channel (if needed)
+				if err := <-errChan; err != nil {
+					log.Error().Err(err).Msg("Error calling hook file")
 				}
 			}
 		} else {
 			log.Warn().Str("userid", mycli.userID).Msg("No webhook set for user")
+		}
+
+		// Get global webhook if configured
+		if *globalWebhook != "" {
+			log.Info().Str("url", *globalWebhook).Msg("Calling global webhook")
+			// Add extra information for the global webhook
+			globalData := map[string]string{
+				"jsonData": string(jsonData),
+				"token":    mycli.token,
+				"userID":   mycli.userID,
+			}
+			go callHook(*globalWebhook, globalData, mycli.userID)
 		}
 	}
 }

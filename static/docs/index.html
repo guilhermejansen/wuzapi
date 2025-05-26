@@ -239,6 +239,11 @@
             <a class="nav-link" href="#admin">Admin</a>
             <a class="nav-link" href="#newsletter">Newsletter</a>
             
+            <div class="px-3 mt-3 mb-1 text-uppercase small fw-bold text-muted">Configurações</div>
+            
+            <a class="nav-link" href="#s3-config">S3 Storage</a>
+            <a class="nav-link" href="#proxy-config">Proxy</a>
+            
             <div class="px-3 mt-3 mb-1 text-uppercase small fw-bold text-muted">Avançado</div>
             
             <a class="nav-link" href="#estrutura-webhook">Estrutura de Webhook</a>
@@ -495,7 +500,12 @@
                         <tr>
                             <td>events</td>
                             <td>Array[string]</td>
-                            <td>Lista de tipos de eventos para inscrição. Valores possíveis: "Message", "ReadReceipt", "Presence", "HistorySync", "ChatPresence", "All"</td>
+                            <td>Lista de tipos de eventos para inscrição. Consulte a seção "Tipos de Eventos Disponíveis" abaixo para a lista completa.</td>
+                        </tr>
+                        <tr>
+                            <td>active</td>
+                            <td>boolean</td>
+                            <td>Define se o webhook está ativo ou não. Padrão: true</td>
                         </tr>
                     </tbody>
                 </table>
@@ -515,6 +525,158 @@
   },
   "success": true
 }</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <h3><span class="method put">PUT</span> <span class="path">/webhook</span></h3>
+                <p>Atualiza a configuração do webhook. Pode atualizar apenas a URL, apenas os eventos, ou ambos.</p>
+                
+                <h4>Parâmetros do Corpo:</h4>
+                <table class="api-table">
+                    <thead>
+                        <tr>
+                            <th>Parâmetro</th>
+                            <th>Tipo</th>
+                            <th>Descrição</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>webhook</td>
+                            <td>string</td>
+                            <td>Nova URL do webhook (opcional se apenas atualizando eventos)</td>
+                        </tr>
+                        <tr>
+                            <td>events</td>
+                            <td>Array[string]</td>
+                            <td>Nova lista de eventos (opcional se apenas atualizando URL)</td>
+                        </tr>
+                        <tr>
+                            <td>active</td>
+                            <td>boolean</td>
+                            <td>Ativar ou desativar o webhook</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <h4>Exemplos de Requisição:</h4>
+                <pre><code class="language-json">// Atualizar apenas eventos
+{
+  "events": ["Message", "Receipt", "GroupInfo"],
+  "active": true
+}
+
+// Atualizar apenas URL
+{
+  "webhook": "https://novo-endpoint.com/webhook",
+  "active": true
+}
+
+// Desativar webhook
+{
+  "active": false
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <h3><span class="method delete">DELETE</span> <span class="path">/webhook</span></h3>
+                <p>Remove o webhook e limpa a configuração de eventos.</p>
+                
+                <h4>Resposta:</h4>
+                <pre><code class="language-json">{
+  "code": 200,
+  "data": {
+    "message": "Webhook removed successfully"
+  },
+  "success": true
+}</code></pre>
+            </div>
+
+            <h3>Tipos de Eventos Disponíveis</h3>
+            <p>A seguir está a lista completa de eventos que você pode assinar:</p>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <h4>Mensagens e Comunicação</h4>
+                    <ul>
+                        <li><code>Message</code> - Mensagem recebida ou enviada</li>
+                        <li><code>UndecryptableMessage</code> - Mensagem que não pôde ser descriptografada</li>
+                        <li><code>Receipt</code> - Confirmação de entrega/leitura</li>
+                        <li><code>MediaRetry</code> - Tentativa de reenvio de mídia</li>
+                    </ul>
+                    
+                    <h4>Grupos e Contatos</h4>
+                    <ul>
+                        <li><code>GroupInfo</code> - Informações do grupo atualizadas</li>
+                        <li><code>JoinedGroup</code> - Entrou em um grupo</li>
+                        <li><code>Picture</code> - Foto de perfil atualizada</li>
+                        <li><code>BlocklistChange</code> - Mudança na lista de bloqueados</li>
+                        <li><code>Blocklist</code> - Lista de bloqueados</li>
+                    </ul>
+                    
+                    <h4>Conexão e Sessão</h4>
+                    <ul>
+                        <li><code>Connected</code> - Conectado ao WhatsApp</li>
+                        <li><code>Disconnected</code> - Desconectado do WhatsApp</li>
+                        <li><code>ConnectFailure</code> - Falha na conexão</li>
+                        <li><code>KeepAliveRestored</code> - Conexão restaurada</li>
+                        <li><code>KeepAliveTimeout</code> - Timeout de conexão</li>
+                        <li><code>LoggedOut</code> - Sessão encerrada</li>
+                        <li><code>ClientOutdated</code> - Cliente desatualizado</li>
+                        <li><code>TemporaryBan</code> - Banimento temporário</li>
+                        <li><code>StreamError</code> - Erro no stream</li>
+                        <li><code>StreamReplaced</code> - Stream substituído</li>
+                        <li><code>PairSuccess</code> - Pareamento bem-sucedido</li>
+                        <li><code>PairError</code> - Erro no pareamento</li>
+                        <li><code>QR</code> - Código QR gerado</li>
+                        <li><code>QRScannedWithoutMultidevice</code> - QR escaneado sem multi-dispositivo</li>
+                    </ul>
+                </div>
+                
+                <div class="col-md-6">
+                    <h4>Privacidade e Configurações</h4>
+                    <ul>
+                        <li><code>PrivacySettings</code> - Configurações de privacidade</li>
+                        <li><code>PushNameSetting</code> - Nome de exibição alterado</li>
+                        <li><code>UserAbout</code> - Status/Sobre atualizado</li>
+                    </ul>
+                    
+                    <h4>Sincronização e Estado</h4>
+                    <ul>
+                        <li><code>AppState</code> - Estado da aplicação</li>
+                        <li><code>AppStateSyncComplete</code> - Sincronização completa</li>
+                        <li><code>HistorySync</code> - Sincronização de histórico</li>
+                        <li><code>OfflineSyncCompleted</code> - Sincronização offline completa</li>
+                        <li><code>OfflineSyncPreview</code> - Preview de sincronização offline</li>
+                    </ul>
+                    
+                    <h4>Chamadas</h4>
+                    <ul>
+                        <li><code>CallOffer</code> - Oferta de chamada</li>
+                        <li><code>CallAccept</code> - Chamada aceita</li>
+                        <li><code>CallTerminate</code> - Chamada encerrada</li>
+                        <li><code>CallOfferNotice</code> - Notificação de oferta de chamada</li>
+                        <li><code>CallRelayLatency</code> - Latência de relay da chamada</li>
+                    </ul>
+                    
+                    <h4>Presença e Atividade</h4>
+                    <ul>
+                        <li><code>Presence</code> - Status de presença</li>
+                        <li><code>ChatPresence</code> - Presença no chat (digitando)</li>
+                    </ul>
+                    
+                    <h4>Outros</h4>
+                    <ul>
+                        <li><code>IdentityChange</code> - Mudança de identidade</li>
+                        <li><code>CATRefreshError</code> - Erro de atualização CAT</li>
+                        <li><code>NewsletterJoin</code> - Entrou em newsletter</li>
+                        <li><code>NewsletterLeave</code> - Saiu de newsletter</li>
+                        <li><code>NewsletterMuteChange</code> - Mudança de mute em newsletter</li>
+                        <li><code>NewsletterLiveUpdate</code> - Atualização ao vivo de newsletter</li>
+                        <li><code>FBMessage</code> - Mensagem do Facebook Bridge</li>
+                        <li><code>All</code> - Receber todos os eventos</li>
+                    </ul>
+                </div>
             </div>
         </section>
 
@@ -901,6 +1063,246 @@
             </div>
         </section>
 
+        <section id="s3-config">
+            <div class="section-title">
+                <div class="section-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M4.406 1.342A5.53 5.53 0 0 1 8 0c2.69 0 4.923 2 5.166 4.579C14.758 4.804 16 6.137 16 7.773 16 9.569 14.502 11 12.687 11H10a.5.5 0 0 1 0-1h2.688C13.979 10 15 8.988 15 7.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 2.825 10.328 1 8 1a4.53 4.53 0 0 0-2.941 1.1c-.757.652-1.153 1.438-1.153 2.055v.448l-.445.049C2.064 4.805 1 5.952 1 7.318 1 8.785 2.23 10 3.781 10H6a.5.5 0 0 1 0 1H3.781C1.708 11 0 9.366 0 7.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383z"/>
+                        <path d="M7.646 15.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 14.293V5.5a.5.5 0 0 0-1 0v8.793l-2.146-2.147a.5.5 0 0 0-.708.708l3 3z"/>
+                    </svg>
+                </div>
+                <h2 class="mb-0">S3 Storage</h2>
+            </div>
+            <p>Configure o armazenamento S3-compatível para armazenar arquivos de mídia do WhatsApp. Suporta AWS S3, MinIO, DigitalOcean Spaces e outros provedores compatíveis.</p>
+
+            <div class="endpoint">
+                <h3><span class="method get">GET</span> <span class="path">/s3/config</span></h3>
+                <p>Obtém a configuração atual do S3.</p>
+                
+                <h4>Resposta:</h4>
+                <pre><code class="language-json">{
+  "code": 200,
+  "data": {
+    "endpoint": "https://s3.amazonaws.com",
+    "bucket": "meu-bucket",
+    "region": "us-east-1",
+    "path_prefix": "uploads/whatsapp/",
+    "force_path_style": false
+  },
+  "success": true
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <h3><span class="method put">PUT</span> <span class="path">/s3/config</span></h3>
+                <p>Configura o armazenamento S3 para esta instância.</p>
+                
+                <h4>Parâmetros do Corpo:</h4>
+                <table class="api-table">
+                    <thead>
+                        <tr>
+                            <th>Parâmetro</th>
+                            <th>Tipo</th>
+                            <th>Descrição</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>endpoint</td>
+                            <td>string</td>
+                            <td>URL do endpoint S3 (padrão: https://s3.amazonaws.com)</td>
+                        </tr>
+                        <tr>
+                            <td class="required">access_key</td>
+                            <td>string</td>
+                            <td>Chave de acesso S3</td>
+                        </tr>
+                        <tr>
+                            <td class="required">secret_key</td>
+                            <td>string</td>
+                            <td>Chave secreta S3</td>
+                        </tr>
+                        <tr>
+                            <td class="required">bucket</td>
+                            <td>string</td>
+                            <td>Nome do bucket S3</td>
+                        </tr>
+                        <tr>
+                            <td>region</td>
+                            <td>string</td>
+                            <td>Região do S3 (obrigatório para AWS S3)</td>
+                        </tr>
+                        <tr>
+                            <td>path_prefix</td>
+                            <td>string</td>
+                            <td>Prefixo do caminho para organizar arquivos</td>
+                        </tr>
+                        <tr>
+                            <td>force_path_style</td>
+                            <td>boolean</td>
+                            <td>Usar estilo de caminho forçado (necessário para MinIO)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <h4>Exemplo de Requisição:</h4>
+                <pre><code class="language-json">{
+  "endpoint": "https://s3.amazonaws.com",
+  "access_key": "AKIAIOSFODNN7EXAMPLE",
+  "secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "bucket": "meu-bucket-whatsapp",
+  "region": "us-east-1",
+  "path_prefix": "uploads/",
+  "force_path_style": false
+}</code></pre>
+                
+                <h4>Resposta:</h4>
+                <pre><code class="language-json">{
+  "code": 200,
+  "data": {
+    "message": "S3 configuration saved successfully"
+  },
+  "success": true
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <h3><span class="method post">POST</span> <span class="path">/s3/test</span></h3>
+                <p>Testa a conexão com o S3 usando a configuração fornecida.</p>
+                
+                <h4>Parâmetros do Corpo:</h4>
+                <p>Mesmos parâmetros do endpoint PUT /s3/config</p>
+                
+                <h4>Resposta:</h4>
+                <pre><code class="language-json">{
+  "code": 200,
+  "data": {
+    "message": "S3 connection test successful"
+  },
+  "success": true
+}</code></pre>
+            </div>
+
+            <div class="alert alert-info">
+                <strong>Exemplos de Configuração:</strong>
+                <ul>
+                    <li><strong>AWS S3:</strong> Use o endpoint padrão e especifique a região</li>
+                    <li><strong>MinIO:</strong> Use seu endpoint customizado (ex: http://localhost:9000) e ative force_path_style</li>
+                    <li><strong>DigitalOcean Spaces:</strong> Use https://nyc3.digitaloceanspaces.com como endpoint</li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="proxy-config">
+            <div class="section-title">
+                <div class="section-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855-.143.268-.276.56-.395.872.705.157 1.472.257 2.282.287V1.077zM4.249 3.539c.142-.384.304-.744.481-1.078a6.7 6.7 0 0 1 .597-.933A7.01 7.01 0 0 0 3.051 3.05c.362.184.763.349 1.198.49zM3.509 7.5c.036-1.07.188-2.087.436-3.008a9.124 9.124 0 0 1-1.565-.667A6.964 6.964 0 0 0 1.018 7.5h2.49zm1.4-2.741a12.344 12.344 0 0 0-.4 2.741H7.5V5.091c-.91-.03-1.783-.145-2.591-.332zM8.5 5.09V7.5h2.99a12.342 12.342 0 0 0-.399-2.741c-.808.187-1.681.301-2.591.332zM4.51 8.5c.035.987.176 1.914.399 2.741A13.612 13.612 0 0 1 7.5 10.91V8.5H4.51zm3.99 0v2.409c.91.03 1.783.145 2.591.332.223-.827.364-1.754.4-2.741H8.5zm-3.282 3.696c.12.312.252.604.395.872.552 1.035 1.218 1.65 1.887 1.855V11.91c-.81.03-1.577.13-2.282.287zm.11 2.276a6.696 6.696 0 0 1-.598-.933 8.853 8.853 0 0 1-.481-1.079 8.38 8.38 0 0 0-1.198.49 7.01 7.01 0 0 0 2.276 1.522zm-1.383-2.964A13.36 13.36 0 0 1 3.508 8.5h-2.49a6.963 6.963 0 0 0 1.362 3.675c.47-.258.995-.482 1.565-.667zm6.728 2.964a7.009 7.009 0 0 0 2.275-1.521 8.376 8.376 0 0 0-1.197-.49 8.853 8.853 0 0 1-.481 1.078 6.688 6.688 0 0 1-.597.933zM8.5 11.909v3.014c.67-.204 1.335-.82 1.887-1.855.143-.268.276-.56.395-.872A12.63 12.63 0 0 0 8.5 11.91zm3.555-.401c.57.185 1.095.409 1.565.667A6.963 6.963 0 0 0 14.982 8.5h-2.49a13.36 13.36 0 0 1-.437 3.008zM14.982 7.5a6.963 6.963 0 0 0-1.362-3.675c-.47.258-.995.482-1.565.667.248.92.4 1.938.437 3.008h2.49zM11.27 2.461c.177.334.339.694.482 1.078a8.368 8.368 0 0 0 1.196-.49 7.01 7.01 0 0 0-2.275-1.52c.218.283.418.597.597.932zm-.488 1.343a7.765 7.765 0 0 0-.395-.872C9.835 1.897 9.17 1.282 8.5 1.077V4.09c.81-.03 1.577-.13 2.282-.287z"/>
+                    </svg>
+                </div>
+                <h2 class="mb-0">Proxy</h2>
+            </div>
+            <p>Configure um proxy HTTP/HTTPS ou SOCKS5 para conexões do WhatsApp. Útil para restrições de rede ou privacidade aprimorada.</p>
+
+            <div class="endpoint">
+                <h3><span class="method get">GET</span> <span class="path">/proxy/config</span></h3>
+                <p>Obtém a configuração atual do proxy.</p>
+                
+                <h4>Resposta:</h4>
+                <pre><code class="language-json">{
+  "code": 200,
+  "data": {
+    "proxy_url": "socks5://proxy.example.com:1080",
+    "username": "user",
+    "bypass_list": ["localhost", "127.0.0.1", "*.local"]
+  },
+  "success": true
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <h3><span class="method put">PUT</span> <span class="path">/proxy/config</span></h3>
+                <p>Configura o proxy para esta instância.</p>
+                
+                <h4>Parâmetros do Corpo:</h4>
+                <table class="api-table">
+                    <thead>
+                        <tr>
+                            <th>Parâmetro</th>
+                            <th>Tipo</th>
+                            <th>Descrição</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="required">proxy_url</td>
+                            <td>string</td>
+                            <td>URL completa do proxy incluindo protocolo e porta</td>
+                        </tr>
+                        <tr>
+                            <td>username</td>
+                            <td>string</td>
+                            <td>Nome de usuário para autenticação do proxy</td>
+                        </tr>
+                        <tr>
+                            <td>password</td>
+                            <td>string</td>
+                            <td>Senha para autenticação do proxy</td>
+                        </tr>
+                        <tr>
+                            <td>bypass_list</td>
+                            <td>Array[string]</td>
+                            <td>Lista de domínios/IPs que devem ignorar o proxy</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <h4>Exemplo de Requisição:</h4>
+                <pre><code class="language-json">{
+  "proxy_url": "socks5://proxy.example.com:1080",
+  "username": "usuario",
+  "password": "senha123",
+  "bypass_list": ["localhost", "127.0.0.1", "*.local", "192.168.*"]
+}</code></pre>
+                
+                <h4>Resposta:</h4>
+                <pre><code class="language-json">{
+  "code": 200,
+  "data": {
+    "message": "Proxy configuration saved successfully"
+  },
+  "success": true
+}</code></pre>
+            </div>
+
+            <div class="endpoint">
+                <h3><span class="method post">POST</span> <span class="path">/proxy/test</span></h3>
+                <p>Testa a conexão através do proxy configurado.</p>
+                
+                <h4>Parâmetros do Corpo:</h4>
+                <p>Mesmos parâmetros do endpoint PUT /proxy/config (exceto bypass_list)</p>
+                
+                <h4>Resposta:</h4>
+                <pre><code class="language-json">{
+  "code": 200,
+  "data": {
+    "message": "Proxy connection test successful",
+    "response_time": "245ms"
+  },
+  "success": true
+}</code></pre>
+            </div>
+
+            <div class="alert alert-warning">
+                <strong>Formatos de URL suportados:</strong>
+                <ul>
+                    <li><strong>HTTP/HTTPS:</strong> <code>http://proxy.example.com:8080</code></li>
+                    <li><strong>SOCKS5:</strong> <code>socks5://proxy.example.com:1080</code></li>
+                    <li><strong>Com autenticação:</strong> <code>socks5://user:pass@proxy.example.com:1080</code></li>
+                </ul>
+            </div>
+        </section>
+
         <section id="melhores-praticas">
             <div class="section-title">
                 <div class="section-icon">
@@ -1049,578 +1451,10 @@
                 anchor.addEventListener('click', function(e) {
                     e.preventDefault();
                     const targetId = this.getAttribute('href');
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Documentação WuzAPI</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
-    <style>
-        :root {
-            --primary-color: #25d366;
-            --primary-hover: #128c7e;
-            --sidebar-width: 280px;
-        }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 0;
-            color: #333;
-        }
-        .sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: var(--sidebar-width);
-            height: 100vh;
-            background-color: #f8f9fa;
-            padding: 20px 0;
-            overflow-y: auto;
-            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
-            z-index: 1000;
-        }
-        .content {
-            margin-left: var(--sidebar-width);
-            padding: 30px;
-            max-width: 960px;
-            margin-right: auto;
-        }
-        .nav-link {
-            color: #495057;
-            padding: 8px 15px;
-            border-left: 3px solid transparent;
-        }
-        .nav-link:hover {
-            color: var(--primary-hover);
-            background-color: #e9ecef;
-            border-left-color: var(--primary-hover);
-        }
-        .nav-link.active {
-            color: var(--primary-color);
-            font-weight: 600;
-            border-left-color: var(--primary-color);
-        }
-        h1, h2, h3, h4 {
-            color: #212529;
-            margin-top: 1.5rem;
-            margin-bottom: 1rem;
-        }
-        .endpoint {
-            background-color: #f8f9fa;
-            border-radius: 6px;
-            padding: 15px;
-            margin-bottom: 20px;
-            border-left: 4px solid var(--primary-color);
-        }
-        .endpoint h3 {
-            margin-top: 0;
-            display: flex;
-            align-items: center;
-        }
-        .method {
-            padding: 4px 8px;
-            border-radius: 4px;
-            color: white;
-            margin-right: 10px;
-            font-size: 14px;
-            font-weight: bold;
-        }
-        .get { background-color: #61affe; }
-        .post { background-color: #49cc90; }
-        .put { background-color: #fca130; }
-        .delete { background-color: #f93e3e; }
-        
-        .path {
-            font-family: monospace;
-            font-weight: 600;
-        }
-        pre {
-            background-color: #f6f8fa;
-            border-radius: 6px;
-            padding: 15px;
-            overflow: auto;
-        }
-        code {
-            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-        }
-        .api-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 20px;
-        }
-        .api-table th, .api-table td {
-            padding: 10px;
-            border: 1px solid #dee2e6;
-        }
-        .api-table th {
-            background-color: #f8f9fa;
-            font-weight: 600;
-        }
-        .required {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        .badge {
-            font-size: 12px;
-            padding: 5px 8px;
-            border-radius: 4px;
-            margin-left: 5px;
-        }
-        .logo {
-            height: 40px;
-            margin-right: 10px;
-        }
-        .nav-header {
-            display: flex;
-            align-items: center;
-            padding: 0 15px 15px;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #dee2e6;
-        }
-        .top-nav {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #dee2e6;
-        }
-        .dashboard-button {
-            padding: 8px 15px;
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            text-decoration: none;
-            transition: background-color 0.3s;
-        }
-        .dashboard-button:hover {
-            background-color: var(--primary-hover);
-            color: white;
-        }
-        .section-title {
-            display: flex;
-            align-items: center;
-            margin-top: 40px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #dee2e6;
-        }
-        .section-icon {
-            margin-right: 10px;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background-color: var(--primary-color);
-            color: white;
-            border-radius: 4px;
-        }
-        .response-example {
-            margin-top: 15px;
-        }
-        .tab-content {
-            padding: 15px;
-            border: 1px solid #dee2e6;
-            border-top: none;
-            border-radius: 0 0 6px 6px;
-        }
-        .nav-tabs {
-            margin-bottom: 0;
-        }
-
-        @media (max-width: 992px) {
-            .sidebar {
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
-            }
-            .sidebar.active {
-                transform: translateX(0);
-            }
-            .content {
-                margin-left: 0;
-                padding: 20px;
-                transition: margin-left 0.3s ease;
-            }
-            .content.sidebar-active {
-                margin-left: var(--sidebar-width);
-            }
-            .menu-toggle {
-                display: block;
-                position: fixed;
-                top: 10px;
-                left: 10px;
-                z-index: 1100;
-                background-color: var(--primary-color);
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px;
-                cursor: pointer;
-            }
-        }
-    </style>
-</head>
-<body>
-    <button class="menu-toggle d-lg-none" id="menu-toggle">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 16 16">
-            <path fill-rule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z"/>
-        </svg>
-    </button>
-
-    <nav class="sidebar" id="sidebar">
-        <div class="nav-header">
-            <img src="/images/favicon.png" alt="WuzAPI Logo" class="logo">
-            <h5 class="mb-0">WuzAPI</h5>
-        </div>
-        <div class="nav flex-column">
-            <a class="nav-link active" href="#introducao">Introdução</a>
-            <a class="nav-link" href="#autenticacao">Autenticação</a>
-            <a class="nav-link" href="#primeiros-passos">Primeiros Passos</a>
-            
-            <div class="px-3 mt-3 mb-1 text-uppercase small fw-bold text-muted">Endpoints</div>
-            
-            <a class="nav-link" href="#session">Session</a>
-            <a class="nav-link" href="#webhook">Webhook</a>
-            <a class="nav-link" href="#chat">Chat</a>
-            <a class="nav-link" href="#user">User</a>
-            <a class="nav-link" href="#group">Group</a>
-            <a class="nav-link" href="#admin">Admin</a>
-            <a class="nav-link" href="#newsletter">Newsletter</a>
-            
-            <div class="px-3 mt-3 mb-1 text-uppercase small fw-bold text-muted">Avançado</div>
-            
-            <a class="nav-link" href="#estrutura-webhook">Estrutura de Webhook</a>
-            <a class="nav-link" href="#melhores-praticas">Melhores Práticas</a>
-            <a class="nav-link" href="#faq">Perguntas Frequentes</a>
-        </div>
-    </nav>
-
-    <main class="content" id="content">
-        <div class="top-nav">
-            <h1>Documentação da API WuzAPI</h1>
-            <div>
-                <a href="/dashboard" class="dashboard-button me-2">Painel de Controle</a>
-                <a href="/api" class="dashboard-button">Swagger</a>
-            </div>
-        </div>
-
-        <section id="introducao">
-            <p class="lead">
-                WuzAPI é uma implementação da biblioteca <a href="https://github.com/tulir/whatsmeow" target="_blank">whatsmeow</a> como um serviço de API RESTful simples com suporte a múltiplos dispositivos e sessões concorrentes.
-            </p>
-            <p>
-                A biblioteca whatsmeow não utiliza Puppeteer em Chrome headless, nem um emulador Android. Ela se comunica diretamente com os servidores websocket do WhatsApp, sendo bastante rápida e utilizando menos memória e CPU que outras soluções. A desvantagem é que uma mudança no protocolo do WhatsApp poderia quebrar as conexões e exigiria uma atualização da biblioteca.
-            </p>
-            <div class="alert alert-warning">
-                <strong>⚠️ Atenção:</strong> Usar este software violando os Termos de Serviço do WhatsApp pode resultar no banimento do seu número. Tenha muito cuidado, não use para enviar SPAM ou algo semelhante. Use por sua conta e risco. Se você precisa desenvolver algo com interesse comercial, entre em contato com um provedor global de soluções WhatsApp e inscreva-se no serviço WhatsApp Business API.
-            </div>
-        </section>
-
-        <section id="autenticacao">
-            <div class="section-title">
-                <div class="section-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                        <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
-                    </svg>
-                </div>
-                <h2 class="mb-0">Autenticação</h2>
-            </div>
-            <p>A WuzAPI oferece dois métodos de autenticação:</p>
-            <ul>
-                <li><strong>Para usuários normais:</strong> Use o cabeçalho <code>token</code> que será correspondido com a tabela 'users' no banco de dados.</li>
-                <li><strong>Para administradores:</strong> Use o cabeçalho <code>Authorization</code> com o token administrativo para acessar rotas protegidas de administração.</li>
-            </ul>
-            <p>Exemplo de requisição com token de usuário:</p>
-            <pre><code class="language-bash">curl -X POST https://seu-dominio.com/webhook \
-  -H "token: seu_token_aqui" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "webhook": "https://seu-webhook.com/callback",
-    "events": ["Message", "ReadReceipt"]
-  }'</code></pre>
-        </section>
-
-        <section id="primeiros-passos">
-            <div class="section-title">
-                <div class="section-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                        <path fill-rule="evenodd" d="M8 0c-.69 0-1.843.265-2.928.56-1.11.3-2.229.655-2.887.87a1.54 1.54 0 0 0-1.044 1.262c-.596 4.477.787 7.795 2.465 9.99a11.777 11.777 0 0 0 2.517 2.453c.386.273.744.482 1.048.625.28.132.581.24.829.24s.548-.108.829-.24a7.159 7.159 0 0 0 1.048-.625 11.775 11.775 0 0 0 2.517-2.453c1.678-2.195 3.061-5.513 2.465-9.99a1.541 1.541 0 0 0-1.044-1.263 62.467 62.467 0 0 0-2.887-.87C9.843.266 8.69 0 8 0zm2.146 5.146a.5.5 0 0 1 .708.708l-3 3a.5.5 0 0 1-.708 0l-1.5-1.5a.5.5 0 1 1 .708-.708L7.5 7.793l2.646-2.647z"/>
-                    </svg>
-                </div>
-                <h2 class="mb-0">Primeiros Passos</h2>
-            </div>
-
-            <p>Para começar a usar a API WuzAPI, siga estes passos:</p>
-
-            <ol>
-                <li>
-                    <strong>Crie um usuário:</strong>
-                    <p>Você precisa criar um usuário no banco de dados. O administrador pode criar um novo usuário através da rota <code>/admin/users</code>.</p>
-                </li>
-                <li>
-                    <strong>Conecte ao WhatsApp:</strong>
-                    <p>Use o endpoint <code>/session/connect</code> para iniciar uma conexão com os servidores do WhatsApp.</p>
-                </li>
-                <li>
-                    <strong>Escaneie o código QR:</strong>
-                    <p>Obtenha o código QR através do endpoint <code>/session/qr</code> e escaneie-o com seu aplicativo WhatsApp.</p>
-                </li>
-                <li>
-                    <strong>Configure seu Webhook:</strong>
-                    <p>Use o endpoint <code>/webhook</code> para configurar a URL do seu webhook e os tipos de eventos que deseja receber.</p>
-                </li>
-                <li>
-                    <strong>Envie mensagens:</strong>
-                    <p>Agora você está pronto para enviar mensagens usando os diversos endpoints disponíveis em <code>/chat/send/*</code>.</p>
-                </li>
-            </ol>
-
-            <div class="alert alert-info">
-                <strong>Dica:</strong> Para testar, você pode usar o dashboard disponível em <a href="/dashboard">/dashboard</a> para gerenciar suas instâncias e visualizar o código QR para conexão.
-            </div>
-        </section>
-
-        <section id="session">
-            <div class="section-title">
-                <div class="section-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                        <path d="M11 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm-9 8c0 1 1 1 1 1h5.256A4.493 4.493 0 0 1 8 12.5a4.49 4.49 0 0 1 1.544-3.393C9.077 9.038 8.564 9 8 9c-5 0-6 3-6 4Zm9.886-3.54c.18-.613 1.048-.613 1.229 0l.043.148a.64.64 0 0 0 .921.382l.136-.074c.561-.306 1.175.308.87.869l-.075.136a.64.64 0 0 0 .382.92l.149.045c.612.18.612 1.048 0 1.229l-.15.043a.64.64 0 0 0-.38.921l.074.136c.305.561-.309 1.175-.87.87l-.136-.075a.64.64 0 0 0-.92.382l-.045.149c-.18.612-1.048.612-1.229 0l-.043-.15a.64.64 0 0 0-.921-.38l-.136.074c-.561.305-1.175-.309-.87-.87l.075-.136a.64.64 0 0 0-.382-.92l-.148-.045c-.613-.18-.613-1.048 0-1.229l.148-.043a.64.64 0 0 0 .382-.921l-.074-.136c-.306-.561.308-1.175.869-.87l.136.075a.64.64 0 0 0 .92-.382l.045-.148ZM14 12.5a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0Z"/>
-                    </svg>
-                </div>
-                <h2 class="mb-0">Session</h2>
-            </div>
-            <p>Endpoints para gerenciar a conexão com os servidores do WhatsApp.</p>
-
-            <div class="endpoint">
-                <h3><span class="method post">POST</span> <span class="path">/session/connect</span></h3>
-                <p>Conecta aos servidores do WhatsApp. Se não houver sessão prévia, será necessário escanear um código QR.</p>
-                
-                <h4>Parâmetros do Corpo:</h4>
-                <table class="api-table">
-                    <thead>
-                        <tr>
-                            <th>Parâmetro</th>
-                            <th>Tipo</th>
-                            <th>Descrição</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>Subscribe</td>
-                            <td>Array[string]</td>
-                            <td>Lista de tipos de eventos para inscrição. Valores possíveis: "Message", "ReadReceipt", "Presence", "HistorySync", "ChatPresence", "All"</td>
-                        </tr>
-                        <tr>
-                            <td>Immediate</td>
-                            <td>boolean</td>
-                            <td>Se true, retorna imediatamente sem esperar pela confirmação da conexão</td>
-                        </tr>
-                    </tbody>
-                </table>
-                
-                <h4>Exemplo de Requisição:</h4>
-                <pre><code class="language-json">{
-  "Subscribe": ["Message", "ReadReceipt"],
-  "Immediate": true
-}</code></pre>
-                
-                <h4>Resposta:</h4>
-                <pre><code class="language-json">{
-  "code": 200,
-  "data": {
-    "details": "Connected!",
-    "events": "Message,ReadReceipt",
-    "jid": "5491155555555.0:53@s.whatsapp.net",
-    "webhook": "https://some.site/webhook?request=parameter"
-  },
-  "success": true
-}</code></pre>
-            </div>
-
-            <div class="endpoint">
-                <h3><span class="method post">POST</span> <span class="path">/session/disconnect</span></h3>
-                <p>Desconecta dos servidores do WhatsApp sem encerrar a sessão.</p>
-                
-                <h4>Resposta:</h4>
-                <pre><code class="language-json">{
-  "code": 200,
-  "data": {
-    "Details": "Disconnected"
-  },
-  "success": true
-}</code></pre>
-            </div>
-
-            <div class="endpoint">
-                <h3><span class="method post">POST</span> <span class="path">/session/logout</span></h3>
-                <p>Encerra a conexão e termina a sessão, sendo necessário escanear o QR novamente na próxima conexão.</p>
-                
-                <h4>Resposta:</h4>
-                <pre><code class="language-json">{
-  "code": 200,
-  "data": {
-    "Details": "Logged out"
-  },
-  "success": true
-}</code></pre>
-            </div>
-
-            <div class="endpoint">
-                <h3><span class="method get">GET</span> <span class="path">/session/status</span></h3>
-                <p>Obtém o status atual da conexão e da sessão.</p>
-                
-                <h4>Resposta:</h4>
-                <pre><code class="language-json">{
-  "code": 200,
-  "data": {
-    "Connected": true,
-    "LoggedIn": true
-  },
-  "success": true
-}</code></pre>
-            </div>
-
-            <div class="endpoint">
-                <h3><span class="method get">GET</span> <span class="path">/session/qr</span></h3>
-                <p>Obtém o código QR para escaneamento no aplicativo WhatsApp.</p>
-                
-                <h4>Resposta:</h4>
-                <pre><code class="language-json">{
-  "code": 200,
-  "data": {
-    "QRCode": "data:image/png;base64,iVBORw0KGgoA..."
-  },
-  "success": true
-}</code></pre>
-            </div>
-        </section>
-
-        <section id="webhook">
-            <div class="section-title">
-                <div class="section-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                        <path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/>
-                    </svg>
-                </div>
-                <h2 class="mb-0">Webhook</h2>
-            </div>
-            <p>Endpoints para configurar webhooks que receberão notificações de eventos.</p>
-
-            <div class="endpoint">
-                <h3><span class="method get">GET</span> <span class="path">/webhook</span></h3>
-                <p>Obtém o webhook configurado e eventos inscritos.</p>
-                
-                <h4>Resposta:</h4>
-                <pre><code class="language-json">{
-  "code": 200,
-  "data": {
-    "subscribe": ["Message", "ReadReceipt"],
-    "webhook": "https://example.net/webhook"
-  },
-  "success": true
-}</code></pre>
-            </div>
-
-            <div class="endpoint">
-                <h3><span class="method post">POST</span> <span class="path">/webhook</span></h3>
-                <p>Configura um webhook para receber eventos.</p>
-                
-                <h4>Parâmetros do Corpo:</h4>
-                <table class="api-table">
-                    <thead>
-                        <tr>
-                            <th>Parâmetro</th>
-                            <th>Tipo</th>
-                            <th>Descrição</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td class="required">webhook</td>
-                            <td>string</td>
-                            <td>URL do webhook que receberá as chamadas</td>
-                        </tr>
-                        <tr>
-                            <td>events</td>
-                            <td>Array[string]</td>
-                            <td>Lista de tipos de eventos para inscrição. Valores possíveis: "Message", "ReadReceipt", "Presence", "HistorySync", "ChatPresence", "All"</td>
-                        </tr>
-                    </tbody>
-                </table>
-                
-                <h4>Exemplo de Requisição:</h4>
-                <pre><code class="language-json">{
-  "webhook": "https://example.net/webhook",
-  "events": ["Message", "ReadReceipt"]
-}</code></pre>
-                
-                <h4>Resposta:</h4>
-                <pre><code class="language-json">{
-  "code": 200,
-  "data": {
-    "webhook": "https://example.net/webhook",
-    "events": ["Message", "ReadReceipt"]
-  },
-  "success": true
-}</code></pre>
-            </div>
-        </section>
-
-        <section id="estrutura-webhook">
-            <div class="section-title">
-                <div class="section-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                        <path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/>
-                        <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533L8.93 6.588zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-                    </svg>
-                </div>
-                <h2 class="mb-0">Estrutura de Webhook</h2>
-            </div>
-            
-            <p>Quando um evento ocorre, o WuzAPI envia uma requisição POST para o webhook configurado com os dados do evento. Abaixo estão os formatos dos principais tipos de eventos:</p>
-
-            <h3>Mensagem Recebida</h3>
-            <pre><code class="language-json">{
-  "event": "Message",
-  "instance": "5491155553934.0:53@s.whatsapp.net",
-  "data": {
-    "id": "3EB0ABCD123456789",
-    "pushName": "Nome do Contato",
-    "fromMe": false,
-    "timestamp": 1647878528,
-    "chat": "5491199999999@s.whatsapp.net",
-    "sender": "5491199999999@s.whatsapp.net",
-    "message": {
-      "conversation": "Olá, como vai?"
-    }
-  }
-}</code></pre>
-
-            <h3>Confirmação de Leitura</h3>
-            <pre><code class="language-json">{
-  "event": "ReadReceipt",
-  "instance": "5491155553934.0:53@s.whatsapp.net",
-  "data": {
-    "sender": "5491199999999@s.whatsapp.net",
-    "chat": "5491199999999@s.whatsapp.net",
-    "ids": ["3EB0ABCD123456789"],
-    "timestamp": 1647878650
-  }
-}</code></pre>
-
-            <h3>Presença</h3>
-            <pre><code class="language-json">{
-  "event": "Presence",
-  "instance": "5491155553934.0:53@s.whatsapp.net",
-  "data": {
-    "sender": "5491199999999@s.whatsapp.net",
-    "status": "available",
-    "timestamp": 1647878750
-  }
-}</code></pre>
-
-            <div class="alert alert-info">
-                <strong>Nota:</strong> Certifique-se de que seu servidor webhook responda às requisições com um código 200 em um tempo razoável. O WuzAPI considera uma resposta bem-sucedida como confirmação de que
+                    document.querySelector(targetId).scrollIntoView({ behavior: 'smooth' });
+                });
+            });
+        });
+    </script>
+</body>
+</html>

@@ -87,7 +87,7 @@ BEGIN
             qrcode TEXT NOT NULL DEFAULT '',
             connected INTEGER,
             expiration INTEGER,
-            events TEXT NOT NULL DEFAULT 'All',
+            events TEXT NOT NULL DEFAULT '',
             proxy_url TEXT DEFAULT ''
         );
     END IF;
@@ -262,7 +262,7 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
                     qrcode TEXT NOT NULL DEFAULT '',
                     connected INTEGER,
                     expiration INTEGER,
-                    events TEXT NOT NULL DEFAULT 'All',
+                    events TEXT NOT NULL DEFAULT '',
                     proxy_url TEXT DEFAULT ''
                 )`)
 		} else {
@@ -459,7 +459,7 @@ func migrateSQLiteIDToString(tx *sqlx.Tx) error {
             qrcode TEXT NOT NULL DEFAULT '',
             connected INTEGER,
             expiration INTEGER,
-            events TEXT NOT NULL DEFAULT 'All',
+            events TEXT NOT NULL DEFAULT '',
             proxy_url TEXT DEFAULT ''
         )`)
 	if err != nil {

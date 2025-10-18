@@ -414,24 +414,28 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 	var proxyURL string
 	err = s.db.Get(&proxyURL, "SELECT proxy_url FROM users WHERE id=$1", userID)
 	if err == nil && proxyURL != "" {
-		// Apply proxy to Resty HTTP client for webhooks/downloads
-		httpClient.SetProxy(proxyURL)
 
-		// Also configure whatsmeow client's proxy BEFORE connecting
-		if parsed, perr := url.Parse(proxyURL); perr == nil {
+		parsed, perr := url.Parse(proxyURL)
+		if perr != nil {
+			log.Warn().Err(perr).Str("proxy", proxyURL).Msg("Invalid proxy URL, skipping proxy setup")
+		} else {
 			if parsed.Scheme == "socks5" || parsed.Scheme == "socks5h" {
 				// Build SOCKS dialer from URL (supports user:pass in URL)
 				dialer, derr := proxy.FromURL(parsed, nil)
 				if derr != nil {
-					log.Warn().Err(derr).Str("proxy", proxyURL).Msg("Failed to build SOCKS proxy dialer")
+					log.Warn().Err(derr).Str("proxy", proxyURL).Msg("Failed to build SOCKS proxy dialer, skipping proxy setup")
 				} else {
+					// Apply proxy to both clients now that we know it's valid.
+					httpClient.SetProxy(proxyURL)
 					client.SetSOCKSProxy(dialer, whatsmeow.SetProxyOptions{})
 				}
 			} else {
-				// http/https proxies
+				// For http/https, apply to both clients.
+				httpClient.SetProxy(proxyURL)
 				client.SetProxyAddress(parsed.String(), whatsmeow.SetProxyOptions{})
 			}
 		}
+
 	}
 	clientManager.SetHTTPClient(userID, httpClient)
 

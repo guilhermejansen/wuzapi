@@ -489,6 +489,12 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 
 				} else if evt.Event == "timeout" {
 					// Clear QR code from DB on timeout
+					// Send webhook notifying QR timeout before cleanup
+					postmap := make(map[string]interface{})
+					postmap["event"] = evt.Event
+					postmap["type"] = "QRTimeout"
+					sendEventWithWebHook(&mycli, postmap, "")
+
 					sqlStmt := `UPDATE users SET qrcode='' WHERE id=$1`
 					_, err := s.db.Exec(sqlStmt, userID)
 					if err != nil {

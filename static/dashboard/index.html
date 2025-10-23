@@ -145,6 +145,12 @@
           <div class="description">Configure message history.</div>
         </div>
       </div>
+      <div class="purple card hidden widget" style="cursor: pointer;" id="hmacConfig">
+        <div class="content"><a class="ui purple right ribbon label">Config</a>
+          <div class="header">HMAC Key</div>
+          <div class="description">Configure HMAC key for webhook security.</div>
+        </div>
+      </div>
     </div>
 
     <div class="ui horizontal divider widget"> User </div>
@@ -506,6 +512,42 @@
     <div class="actions">
       <div class="ui cancel button secondary">Cancel</div>
       <div class="ui positive right labeled icon button" id="saveProxyConfig">Save<i class="checkmark icon"></i></div>
+    </div>
+  </div>
+
+  <!-- HMAC Configuration Modal -->
+  <div class="ui modal" id="modalHmacConfig"><i class="close icon"></i>
+    <div class="header"> HMAC Configuration </div>
+    <div class="content">
+      <div class="ui info message">
+        <div class="header">HMAC Key Settings</div>
+        <p>Configure HMAC key for webhook security. This key will be used to verify webhook authenticity.</p>
+      </div>
+      <div class="ui form">
+        <div class="field">
+          <label>HMAC Key</label>
+          <input id="hmacKey" type="password" placeholder="Enter your HMAC key (minimum 32 characters)">
+          <small>Minimum 32 characters for security. Keep this key secret!</small>
+        </div>
+        <div class="field">
+          <div class="ui buttons">
+            <button class="ui primary button" id="generateHmacKey">
+              <i class="random icon"></i> Generate Random Key
+            </button>
+            <button class="ui black button" id="showHmacKey">
+              <i class="eye icon"></i> Show Key
+            </button>
+            <button class="ui button" id="hideHmacKey" style="display: none;">
+              <i class="eye slash icon"></i> Hide Key
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <div class="ui cancel button secondary">Cancel</div>
+      <div class="ui red button" id="deleteHmacConfig">Delete Configuration</div>
+      <div class="ui positive right labeled icon button" id="saveHmacConfig">Save<i class="checkmark icon"></i></div>
     </div>
   </div>
 

@@ -5510,3 +5510,108 @@ func (s *server) saveOutgoingMessageToHistory(userID, chatJID, messageID, messag
 		}
 	}
 }
+
+// Configure HMAC
+func (s *server) ConfigureHmac() http.HandlerFunc {
+	type hmacConfigStruct struct {
+		HmacKey string `json:"hmac_key"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		decoder := json.NewDecoder(r.Body)
+		var t hmacConfigStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
+			return
+		}
+
+		// Validate HMAC key (minimum 32 characters for security)
+		if len(t.HmacKey) < 32 {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("HMAC key must be at least 32 characters long"))
+			return
+		}
+
+		// Update database
+		_, err = s.db.Exec(`
+			UPDATE users SET hmac_key = $1 WHERE id = $2`,
+			t.HmacKey, txtid)
+
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save HMAC configuration"))
+			return
+		}
+
+		response := map[string]interface{}{
+			"Details": "HMAC configuration saved successfully",
+		}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}
+
+// Get HMAC Configuration
+func (s *server) GetHmacConfig() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		var config struct {
+			HmacKey string `json:"hmac_key" db:"hmac_key"`
+		}
+
+		err := s.db.Get(&config, `
+			SELECT hmac_key FROM users WHERE id = $1`, txtid)
+
+		if err != nil {
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to get HMAC configuration from database")
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to get HMAC configuration"))
+			return
+		}
+
+		log.Debug().Str("userID", txtid).Bool("hasKey", config.HmacKey != "").Msg("Retrieved HMAC configuration from database")
+
+		// Don't return the actual key for security - just indicate if it exists
+		if config.HmacKey != "" {
+			config.HmacKey = "***" // Mask HMAC key
+		}
+
+		responseJson, err := json.Marshal(config)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}
+
+// Delete HMAC Configuration
+func (s *server) DeleteHmacConfig() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		// Clear HMAC key
+		_, err := s.db.Exec(`
+			UPDATE users SET hmac_key = '' WHERE id = $1`, txtid)
+
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to delete HMAC configuration"))
+			return
+		}
+
+		response := map[string]interface{}{
+			"Details": "HMAC configuration deleted successfully",
+		}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}

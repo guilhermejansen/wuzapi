@@ -60,6 +60,11 @@ var migrations = []Migration{
 		Name:  "add_quoted_message_id",
 		UpSQL: addQuotedMessageIDSQL,
 	},
+	{
+		ID:    7,
+		Name:  "add_hmac_key",
+		UpSQL: addHmacKeySQL,
+	},
 }
 
 const changeIDToStringSQL = `
@@ -400,6 +405,13 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}
+	} else if migration.ID == 7 {
+		if db.DriverName() == "sqlite" {
+			// Add hmac_key column to users table for SQLite
+			err = addColumnIfNotExistsSQLite(tx, "users", "hmac_key", "TEXT DEFAULT ''")
+		} else {
+			_, err = tx.Exec(migration.UpSQL)
+		}
 	} else {
 		_, err = tx.Exec(migration.UpSQL)
 	}
@@ -598,3 +610,16 @@ func addColumnIfNotExistsSQLite(tx *sqlx.Tx, tableName, columnName, columnDef st
 	}
 	return nil
 }
+
+const addHmacKeySQL = `
+-- PostgreSQL version
+DO $$
+BEGIN
+    -- Add hmac_key column to users table if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'hmac_key') THEN
+        ALTER TABLE users ADD COLUMN hmac_key TEXT DEFAULT '';
+    END IF;
+END $$;
+
+-- SQLite version (handled in code)
+`

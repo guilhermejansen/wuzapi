@@ -103,6 +103,20 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
+  // Initialize add instance HMAC toggle
+  $('#addInstanceHmacToggle').checkbox({
+    onChange: function() {
+      const enabled = $('input[name="hmac_enabled"]').is(':checked');
+      if (enabled) {
+        $('#addInstanceHmacKeyField').show();
+      } else {
+        $('#addInstanceHmacKeyField').hide();
+        // Clear HMAC field when disabled
+        $('input[name="hmac_key"]').val('');
+      }
+    }
+  });
+
   // Handle admin login button click
   adminLoginBtn.addEventListener('click', function() {
     isAdminLogin = true;
@@ -340,6 +354,20 @@ document.addEventListener('DOMContentLoaded', function() {
     deleteHmacConfig();
   });
 
+  // HMAC Instance Generate Key
+  document.getElementById('generateHmacKeyInstance').addEventListener('click', function() {
+    generateRandomHmacKeyInstance();
+  });
+
+  // HMAC Instance Show/Hide Key
+  document.getElementById('showHmacKeyInstance').addEventListener('click', function() {
+    toggleHmacKeyVisibilityInstance();
+  });
+
+  document.getElementById('hideHmacKeyInstance').addEventListener('click', function() {
+    toggleHmacKeyVisibilityInstance();
+  });
+
   // Proxy checkbox toggle is now initialized in DOMContentLoaded
 
   $('#addInstanceButton').click(function() {
@@ -409,16 +437,17 @@ document.addEventListener('DOMContentLoaded', function() {
     },
     onSuccess: function(event, fields) {
       event.preventDefault();
-      
+
       // Validate conditional fields
       const proxyEnabled = fields.proxy_enabled === 'on' || fields.proxy_enabled === true;
       const s3Enabled = fields.s3_enabled === 'on' || fields.s3_enabled === true;
-      
+      const hmacEnabled = fields.hmac_enabled === 'on' || fields.hmac_enabled === true;
+
       if (proxyEnabled && !fields.proxy_url) {
         showError('Proxy URL is required when proxy is enabled');
         return false;
       }
-      
+
       if (s3Enabled) {
         if (!fields.s3_bucket) {
           showError('S3 bucket name is required when S3 is enabled');
@@ -433,7 +462,17 @@ document.addEventListener('DOMContentLoaded', function() {
           return false;
         }
       }
-      
+
+      if (hmacEnabled && !fields.hmac_key) {
+        showError('HMAC key is required when HMAC is enabled');
+        return false;
+      }
+
+      if (hmacEnabled && fields.hmac_key && fields.hmac_key.length < 32) {
+        showError('HMAC key must be at least 32 characters long');
+        return false;
+      }
+
       addInstance(fields).then((result) => {
         if (result.success) {
           showSuccess('Instance created successfully');
@@ -445,15 +484,17 @@ document.addEventListener('DOMContentLoaded', function() {
       }).catch((error) => {
         showError('Error creating instance: ' + error.message);
       });
-      
+
       $('#addInstanceModal').modal('hide');
       $('#addInstanceForm').form('reset');
       $('.ui.dropdown').dropdown('restore defaults');
       // Reset toggles
       $('#addInstanceProxyToggle').checkbox('set unchecked');
       $('#addInstanceS3Toggle').checkbox('set unchecked');
+      $('#addInstanceHmacToggle').checkbox('set unchecked');
       $('#addInstanceProxyUrlField').hide();
       $('#addInstanceS3Fields').hide();
+      $('#addInstanceHmacKeyField').hide();
     }
   });
 
@@ -466,7 +507,7 @@ async function addInstance(data) {
   const myHeaders = new Headers();
   myHeaders.append('authorization', admintoken);
   myHeaders.append('Content-Type', 'application/json');
-  
+
   // Build proxy configuration
   const proxyEnabled = data.proxy_enabled === 'on' || data.proxy_enabled === true;
   const proxyConfig = {
@@ -489,7 +530,11 @@ async function addInstance(data) {
     mediaDelivery: s3Enabled ? (data.s3_media_delivery || 'base64') : 'base64',
     retentionDays: s3Enabled ? (parseInt(data.s3_retention_days) || 30) : 30
   };
-  
+
+  // Build HMAC configuration
+  const hmacEnabled = data.hmac_enabled === 'on' || data.hmac_enabled === true;
+  const hmacKey = hmacEnabled ? (data.hmac_key || '') : '';
+
   const payload = {
     name: data.name,
     token: data.token,
@@ -498,17 +543,18 @@ async function addInstance(data) {
     expiration: 0,
     history: parseInt(data.history) || 0,
     proxyConfig: proxyConfig,
-    s3Config: s3Config
+    s3Config: s3Config,
+    hmacKey: hmacKey
   };
-  
+
   console.log("Payload being sent:", payload);
-  
+
   res = await fetch(baseUrl + "/admin/users", {
     method: "POST",
     headers: myHeaders,
     body: JSON.stringify(payload)
   });
-  
+
   const responseData = await res.json();
   console.log("Response:", responseData);
   return responseData;
@@ -1864,6 +1910,32 @@ function toggleHmacKeyVisibility() {
   const input = $('#hmacKey');
   const showBtn = $('#showHmacKey');
   const hideBtn = $('#hideHmacKey');
+  
+  if (input.attr('type') === 'password') {
+    input.attr('type', 'text');
+    showBtn.hide();
+    hideBtn.show();
+  } else {
+    input.attr('type', 'password');
+    showBtn.show();
+    hideBtn.hide();
+  }
+}
+
+// HMAC Instance Functions
+function generateRandomHmacKeyInstance() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 64; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  $('input[name="hmac_key"]').val(result);
+}
+
+function toggleHmacKeyVisibilityInstance() {
+  const input = $('input[name="hmac_key"]');
+  const showBtn = $('#showHmacKeyInstance');
+  const hideBtn = $('#hideHmacKeyInstance');
   
   if (input.attr('type') === 'password') {
     input.attr('type', 'text');

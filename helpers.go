@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -72,6 +75,11 @@ func updateUserInfo(values interface{}, field string, value string) interface{} 
 
 // webhook for regular messages
 func callHook(myurl string, payload map[string]string, id string) {
+	callHookWithHmac(myurl, payload, id, "")
+}
+
+// webhook for regular messages with HMAC
+func callHookWithHmac(myurl string, payload map[string]string, id string, hmacKey string) {
 	log.Info().Str("url", myurl).Msg("Sending POST to client " + id)
 
 	// Log the payload map
@@ -88,6 +96,8 @@ func callHook(myurl string, payload map[string]string, id string) {
 		// The original payload is a map[string]string, but we want to send the postmap (map[string]interface{})
 		// So we try to decode the jsonData field if it exists, otherwise we send the original payload
 		var body interface{} = payload
+		var jsonBody []byte
+
 		if jsonStr, ok := payload["jsonData"]; ok {
 			var postmap map[string]interface{}
 			err := json.Unmarshal([]byte(jsonStr), &postmap)
@@ -96,24 +106,69 @@ func callHook(myurl string, payload map[string]string, id string) {
 				body = postmap
 			}
 		}
-		_, err := client.R().
+
+		// Marshal body to JSON for HMAC signature
+		jsonBody, marshalErr := json.Marshal(body)
+		if marshalErr != nil {
+			log.Error().Err(marshalErr).Msg("Failed to marshal body for HMAC")
+		}
+
+		// Generate HMAC signature if key exists
+		var hmacSignature string
+		if hmacKey != "" && len(jsonBody) > 0 {
+			hmacSignature = generateHmacSignature(jsonBody, hmacKey)
+			log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature")
+		}
+
+		req := client.R().
 			SetHeader("Content-Type", "application/json").
-			SetBody(body).
-			Post(myurl)
-		if err != nil {
-			log.Debug().Str("error", err.Error())
+			SetBody(body)
+
+		// Add HMAC signature header if available
+		if hmacSignature != "" {
+			req.SetHeader("x-hmac-signature", hmacSignature)
+		}
+
+		_, postErr := req.Post(myurl)
+		if postErr != nil {
+			log.Debug().Str("error", postErr.Error())
 		}
 	} else {
 		// Default: send as form-urlencoded
-		_, err := client.R().SetFormData(payload).Post(myurl)
-		if err != nil {
-			log.Debug().Str("error", err.Error())
+		// For form data, we'll create a JSON representation for HMAC
+		jsonPayload, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			log.Error().Err(marshalErr).Msg("Failed to marshal payload for HMAC")
+		}
+
+		// Generate HMAC signature if key exists
+		var hmacSignature string
+		if hmacKey != "" && len(jsonPayload) > 0 {
+			hmacSignature = generateHmacSignature(jsonPayload, hmacKey)
+			log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature")
+		}
+
+		req := client.R().SetFormData(payload)
+
+		// Add HMAC signature header if available
+		if hmacSignature != "" {
+			req.SetHeader("x-hmac-signature", hmacSignature)
+		}
+
+		_, postErr := req.Post(myurl)
+		if postErr != nil {
+			log.Debug().Str("error", postErr.Error())
 		}
 	}
 }
 
 // webhook for messages with file attachments
 func callHookFile(myurl string, payload map[string]string, id string, file string) error {
+	return callHookFileWithHmac(myurl, payload, id, file, "")
+}
+
+// webhook for messages with file attachments and HMAC
+func callHookFileWithHmac(myurl string, payload map[string]string, id string, file string, hmacKey string) error {
 	log.Info().Str("file", file).Str("url", myurl).Msg("Sending POST")
 
 	client := clientManager.GetHTTPClient(id)
@@ -128,12 +183,30 @@ func callHookFile(myurl string, payload map[string]string, id string, file strin
 
 	log.Debug().Interface("finalPayload", finalPayload).Msg("Final payload to be sent")
 
-	resp, err := client.R().
+	// Generate HMAC signature if key exists
+	var hmacSignature string
+	if hmacKey != "" {
+		jsonPayload, err := json.Marshal(finalPayload)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to marshal payload for HMAC")
+		} else {
+			hmacSignature = generateHmacSignature(jsonPayload, hmacKey)
+			log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature for file webhook")
+		}
+	}
+
+	req := client.R().
 		SetFiles(map[string]string{
 			"file": file,
 		}).
-		SetFormData(finalPayload).
-		Post(myurl)
+		SetFormData(finalPayload)
+
+	// Add HMAC signature header if available
+	if hmacSignature != "" {
+		req.SetHeader("x-hmac-signature", hmacSignature)
+	}
+
+	resp, err := req.Post(myurl)
 
 	if err != nil {
 		log.Error().Err(err).Str("url", myurl).Msg("Failed to send POST request")
@@ -190,4 +263,15 @@ func ProcessOutgoingMedia(userID string, contactJID string, messageID string, da
 	}
 
 	return nil, nil
+}
+
+// generateHmacSignature generates HMAC-SHA256 signature for webhook payload
+func generateHmacSignature(payload []byte, secretKey string) string {
+	if secretKey == "" {
+		return ""
+	}
+
+	h := hmac.New(sha256.New, []byte(secretKey))
+	h.Write(payload)
+	return hex.EncodeToString(h.Sum(nil))
 }

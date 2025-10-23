@@ -66,6 +66,10 @@ func sendToGlobalWebHook(jsonData []byte, token string, userID string) {
 }
 
 func sendToUserWebHook(webhookurl string, path string, jsonData []byte, userID string, token string) {
+	sendToUserWebHookWithHmac(webhookurl, path, jsonData, userID, token, "")
+}
+
+func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, userID string, token string, hmacKey string) {
 
 	instance_name := ""
 	userinfo, found := userinfocache.Get(token)
@@ -82,13 +86,14 @@ func sendToUserWebHook(webhookurl string, path string, jsonData []byte, userID s
 
 	if webhookurl != "" {
 		log.Info().Str("url", webhookurl).Msg("Calling user webhook")
+
 		if path == "" {
-			go callHook(webhookurl, data, userID)
+			go callHookWithHmac(webhookurl, data, userID, hmacKey)
 		} else {
 			// Create a channel to capture the error from the goroutine
 			errChan := make(chan error, 1)
 			go func() {
-				err := callHookFile(webhookurl, data, userID, path)
+				err := callHookFileWithHmac(webhookurl, data, userID, path, hmacKey)
 				errChan <- err
 			}()
 
@@ -182,8 +187,14 @@ func sendEventWithWebHook(mycli *MyClient, postmap map[string]interface{}, path 
 		return
 	}
 
+	// Get HMAC key for this user
+	hmacKey := ""
+	if userinfo, found := userinfocache.Get(mycli.token); found {
+		hmacKey = userinfo.(Values).Get("HmacKey")
+	}
+
 	// Call user webhook if configured
-	sendToUserWebHook(webhookurl, path, jsonData, mycli.userID, mycli.token)
+	sendToUserWebHookWithHmac(webhookurl, path, jsonData, mycli.userID, mycli.token, hmacKey)
 
 	// Get global webhook if configured
 	go sendToGlobalWebHook(jsonData, mycli.token, mycli.userID)
@@ -205,7 +216,7 @@ func checkIfSubscribedToEvent(subscribedEvents []string, eventType string, userI
 
 // Connects to Whatsapp Websocket on server startup if last state was connected
 func (s *server) connectOnStartup() {
-	rows, err := s.db.Queryx("SELECT id,name,token,jid,webhook,events,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,media_delivery,COALESCE(history, 0) as history FROM users WHERE connected=1")
+	rows, err := s.db.Queryx("SELECT id,name,token,jid,webhook,events,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,media_delivery,COALESCE(history, 0) as history,COALESCE(hmac_key, '') as hmac_key FROM users WHERE connected=1")
 	if err != nil {
 		log.Error().Err(err).Msg("DB Problem")
 		return
@@ -222,7 +233,8 @@ func (s *server) connectOnStartup() {
 		s3_enabled := ""
 		media_delivery := ""
 		var history int
-		err = rows.Scan(&txtid, &name, &token, &jid, &webhook, &events, &proxy_url, &s3_enabled, &media_delivery, &history)
+		hmac_key := ""
+		err = rows.Scan(&txtid, &name, &token, &jid, &webhook, &events, &proxy_url, &s3_enabled, &media_delivery, &history, &hmac_key)
 		if err != nil {
 			log.Error().Err(err).Msg("DB Problem")
 			return
@@ -239,6 +251,7 @@ func (s *server) connectOnStartup() {
 				"S3Enabled":     s3_enabled,
 				"MediaDelivery": media_delivery,
 				"History":       fmt.Sprintf("%d", history),
+				"HmacKey":       hmac_key,
 			}}
 			userinfocache.Set(token, v, cache.NoExpiration)
 			// Gets and set subscription to webhook events

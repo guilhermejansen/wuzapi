@@ -537,7 +537,7 @@
             <button class="ui black button" id="showHmacKey">
               <i class="eye icon"></i> Show Key
             </button>
-            <button class="ui button" id="hideHmacKey" style="display: none;">
+            <button class="ui black button" id="hideHmacKey" style="display: none;">
               <i class="eye slash icon"></i> Hide Key
             </button>
           </div>
@@ -719,6 +719,32 @@
               <label>Force Path Style</label>
             </div>
             <small>Enable for MinIO and some S3-compatible providers.</small>
+          </div>
+        </div>
+
+        <!-- HMAC Configuration -->
+        <h4 class="ui dividing header">HMAC Configuration (Optional)</h4>
+        <div class="field">
+          <div class="ui toggle checkbox" id="addInstanceHmacToggle">
+            <input type="checkbox" name="hmac_enabled">
+            <label>Enable HMAC Key</label>
+          </div>
+          <small>Enable HMAC key for webhook security</small>
+        </div>
+        <div class="field" id="addInstanceHmacKeyField" style="display: none;">
+          <label>HMAC Key</label>
+          <input type="password" name="hmac_key" placeholder="Enter HMAC key (minimum 32 characters)">
+          <small>Minimum 32 characters for security. Keep this key secret!</small>
+          <div class="ui buttons" style="margin-top: 10px;">
+            <button type="button" class="ui primary button" id="generateHmacKeyInstance">
+              <i class="random icon"></i> Generate Random Key
+            </button>
+            <button type="button" class="ui black button" id="showHmacKeyInstance">
+              <i class="eye icon"></i> Show Key
+            </button>
+            <button type="button" class="ui black button" id="hideHmacKeyInstance" style="display: none;">
+              <i class="eye slash icon"></i> Hide Key
+            </button>
           </div>
         </div>
 

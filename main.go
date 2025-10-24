@@ -45,6 +45,7 @@ var (
 	sslprivkey    = flag.String("sslprivatekey", "", "SSL Certificate Private Key File")
 	adminToken    = flag.String("admintoken", "", "Security Token to authorize admin actions (list/create/remove users)")
 	globalWebhook = flag.String("globalwebhook", "", "Global webhook URL to receive all events from all users")
+	globalHMACKey = flag.String("globalhmackey", "", "Global HMAC key for webhook signing")
 	versionFlag   = flag.Bool("version", false, "Display version information and exit")
 
 	container        *sqlstore.Container
@@ -148,6 +149,16 @@ func init() {
 	} else {
 		log.Info().Str("global_webhook", *globalWebhook).Msg("Global webhook configured from command line")
 	}
+
+	// Check for global HMAC key in environment variable
+    if *globalHMACKey == "" {
+        if v := os.Getenv("WUZAPI_GLOBAL_HMAC_KEY"); v != "" {
+            *globalHMACKey = v
+            log.Info().Msg("Global HMAC key configured from environment variable")
+        }
+    } else {
+        log.Info().Msg("Global HMAC key configured from command line")
+    }
 
 	InitRabbitMQ()
 }

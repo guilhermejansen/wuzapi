@@ -61,7 +61,7 @@ func sendToGlobalWebHook(jsonData []byte, token string, userID string) {
 			"userID":       userID,
 			"instanceName": instance_name,
 		}
-		callHook(*globalWebhook, globalData, userID)
+		callHookWithHmac(*globalWebhook, globalData, userID, *globalHMACKey)
 	}
 }
 

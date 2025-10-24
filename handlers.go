@@ -679,6 +679,9 @@ func (s *server) GetStatus() http.HandlerFunc {
 			"media_delivery": s3MediaDelivery,
 			"retention_days": s3RetentionDays,
 		}
+		var hmacKey string
+		s.db.QueryRow("SELECT hmac_key FROM users WHERE id = $1", txtid).Scan(&hmacKey)
+		hmacConfigured := hmacKey != ""
 		response := map[string]interface{}{
 			"id":           txtid,
 			"name":         userInfo.Get("Name"),
@@ -693,6 +696,7 @@ func (s *server) GetStatus() http.HandlerFunc {
 			"history":      userInfo.Get("History"),
 			"proxy_config": proxyConfig,
 			"s3_config":    s3Config,
+			"hmac_configured": hmacConfigured,
 		}
 		responseJson, err := json.Marshal(response)
 		if err != nil {

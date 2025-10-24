@@ -1242,6 +1242,10 @@ function populateInstances(instances) {
                               <div class="content" style="word-break: break-all;">${instance.webhook || 'Not configured'}</div>
                           </div>
                           <div class="item">
+                              <div class="header">HMAC</div>
+                              <div class="content">${instance.hmac_configured ? 'Configured' : 'Not configured'}</div>
+                          </div>
+                          <div class="item">
                               <div class="header">Subscribed Events</div>
                               <div class="content">${instance.events || 'Not configured'}</div>
                           </div>

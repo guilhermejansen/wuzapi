@@ -20,6 +20,7 @@ Be very careful—do not use this to send SPAM or anything similar. Use at your 
 * **Chat:** Set presence (typing/paused, recording media), mark messages as read, download images from messages, send reactions.
 * **Groups:** Create, delete and list groups, get info, get invite links, set participants, change group photos and names.
 * **Webhooks:** Set and get webhooks that will be called whenever events or messages are received.
+* **HMAC Configuration:** Configure HMAC keys for webhook security and signature verification.
  
 ## Prerequisites
 
@@ -112,9 +113,11 @@ No database configuration needed - SQLite is used by default if no PostgreSQL se
 #### Optional Settings
 ```
 TZ=America/New_York
-WEBHOOK_FORMAT=json  # or "form" for the default
+WEBHOOK_FORMAT=json        # or "form" for the default
 SESSION_DEVICE_NAME=WuzAPI
-WUZAPI_PORT=8080     # Port for the WuzAPI server
+WUZAPI_PORT=8080           # Port for the WuzAPI server
+WUZAPI_GLOBAL_WEBHOOK=     # Global webhook URL for all instances
+WUZAPI_GLOBAL_HMAC_KEY=    # Global HMAC key for webhook signing (min 32 chars)
 ```
 
 ### RabbitMQ Integration
@@ -133,6 +136,19 @@ When enabled:
 * Events will include the userId and instanceName
 * This works alongside webhook configurations - events will be sent to both RabbitMQ and any configured webhooks
 * The integration is global and affects all instances
+
+### Webhook Security with HMAC
+
+WuzAPI supports HMAC signatures for webhook verification:
+
+* **Per-instance HMAC**: Configure unique HMAC keys for each user instance
+* **Global HMAC**: Set a global HMAC key via `WUZAPI_GLOBAL_HMAC_KEY` environment variable
+* **Signature Header**: All signed webhooks include `x-hmac-signature` header
+* **Key Security**: HMAC keys are never exposed after configuration
+
+**Priority**: Instance HMAC > Global HMAC > No signature
+
+Configure HMAC keys via the Dashboard or using the `/session/hmac/config` API endpoints.
 
 #### Key configuration options:
 

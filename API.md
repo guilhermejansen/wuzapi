@@ -192,6 +192,125 @@ Response:
 
 ---
 
+## HMAC Configuration
+
+The following _HMAC_ endpoints are used to configure and manage HMAC keys for webhook security. HMAC signatures verify that webhooks are authentic and haven't been tampered with.
+
+### Security Notes:
+
+* HMAC keys must be at least 32 characters long for security
+* Once saved, HMAC keys cannot be retrieved or viewed
+* All webhooks will include an `x-hmac-signature` header when HMAC is configured
+* Webhooks are signed using SHA-256 HMAC
+
+---
+
+## Configure HMAC Key
+
+Configures HMAC key for webhook signing to verify webhook authenticity.
+
+Endpoint: _/session/hmac/config_
+
+Method: **POST**
+
+**Headers:**
+
+* `Authorization: {user_token}`
+* `Content-Type: application/json`
+
+**Request Body:**
+
+```json
+{
+  "hmac_key": "your_hmac_key_minimum_32_characters_long_here"
+}
+```
+
+**Example Request:**
+
+```
+curl -s -X POST -H 'Authorization: 1234ABCD' -H 'Content-Type: application/json' --data '{"hmac_key":"your_hmac_key_minimum_32_characters_long_here"}' http://localhost:8080/session/hmac/config
+```
+
+**Response:**
+
+```json
+{
+  "code": 200,
+  "data": {
+    "Details": "HMAC configuration saved successfully"
+  },
+  "success": true
+}
+```
+
+**Error Responses:**
+
+* `400 Bad Request`: HMAC key less than 32 characters
+* `500 Internal Server Error`: Failed to save configuration
+
+---
+
+## Get HMAC Configuration Status
+
+Retrieves HMAC configuration status (does not return the actual key for security reasons).
+
+Endpoint: _/session/hmac/config_
+
+Method: **GET**
+
+**Headers:**
+
+* `Authorization: {user_token}`
+
+**Example Request:**
+
+```
+curl -s -X GET -H 'Authorization: 1234ABCD' http://localhost:8080/session/hmac/config
+```
+
+**Response:**
+
+```json
+{
+  "hmac_key": "***"
+}
+```
+
+---
+
+## Delete HMAC Configuration
+
+Removes HMAC configuration and disables webhook signing.
+
+Endpoint: _/session/hmac/config_
+
+Method: **DELETE**
+
+**Headers:**
+
+* `Authorization: {user_token}`
+
+**Example Request:**
+
+```
+curl -s -X DELETE -H 'Authorization: 1234ABCD' http://localhost:8080/session/hmac/config
+```
+
+**Response:**
+
+```json
+{
+  "code": 200,
+  "data": {
+    "Details": "HMAC configuration deleted successfully"
+  },
+  "success": true
+}
+```
+
+---
+
 ## Session
 
 The following _session_ endpoints are used to start a session to Whatsapp servers in order to send and receive messages

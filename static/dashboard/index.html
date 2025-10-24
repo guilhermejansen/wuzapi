@@ -523,6 +523,15 @@
         <div class="header">HMAC Key Settings</div>
         <p>Configure HMAC key for webhook security. This key will be used to verify webhook authenticity.</p>
       </div>
+      <div class="ui warning message">
+        <div class="header">Important Security Notice</div>
+        <p>
+          <strong>The HMAC key will be hidden after saving for security reasons.</strong><br>
+          • You won't be able to view it again<br>
+          • Save a copy in a secure location before proceeding<br>
+          • If lost, you'll need to generate a new key
+        </p>
+      </div>
       <div class="ui form">
         <div class="field">
           <label>HMAC Key</label>
@@ -731,7 +740,17 @@
           </div>
           <small>Enable HMAC key for webhook security</small>
         </div>
-        <div class="field" id="addInstanceHmacKeyField" style="display: none;">
+        <div class="ui warning message" id="addInstanceHmacKeyWarningMessage" style="display: none;">
+          <div class="header">Important Security Notice</div>
+          <p>
+            <strong>The HMAC key will be hidden after saving for security reasons.</strong><br>
+            • You won't be able to view it again<br>
+            • Save a copy in a secure location before proceeding<br>
+            • If lost, you'll need to generate a new key
+          </p>
+        </div>
+        <div class="field"
+         id="addInstanceHmacKeyField" style="display: none;">
           <label>HMAC Key</label>
           <input type="password" name="hmac_key" placeholder="Enter HMAC key (minimum 32 characters)">
           <small>Minimum 32 characters for security. Keep this key secret!</small>

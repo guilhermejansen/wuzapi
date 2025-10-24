@@ -108,8 +108,10 @@ document.addEventListener('DOMContentLoaded', function() {
     onChange: function() {
       const enabled = $('input[name="hmac_enabled"]').is(':checked');
       if (enabled) {
+        $('#addInstanceHmacKeyWarningMessage').show();
         $('#addInstanceHmacKeyField').show();
       } else {
+        $('#addInstanceHmacKeyWarningMessage').hide();
         $('#addInstanceHmacKeyField').hide();
         // Clear HMAC field when disabled
         $('input[name="hmac_key"]').val('');
@@ -494,6 +496,7 @@ document.addEventListener('DOMContentLoaded', function() {
       $('#addInstanceHmacToggle').checkbox('set unchecked');
       $('#addInstanceProxyUrlField').hide();
       $('#addInstanceS3Fields').hide();
+      $('#addInstanceHmacKeyWarningMessage').hide();
       $('#addInstanceHmacKeyField').hide();
     }
   });

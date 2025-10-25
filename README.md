@@ -262,10 +262,10 @@ Check the [API Reference](https://github.com/asternic/wuzapi/blob/main/API.md)
         </a>
     </td>
     <td align="center" style="word-wrap: break-word; width: 150.0; height: 150.0">
-        <a href=https://github.com/pedroafonso18>
-            <img src=https://avatars.githubusercontent.com/u/157052926?v=4 width="100;"  style="border-radius:50%;align-items:center;justify-content:center;overflow:hidden;padding-top:10px" alt=Pedro Afonso/>
+        <a href=https://github.com/luizrgf2>
+            <img src=https://avatars.githubusercontent.com/u/71092163?v=4 width="100;"  style="border-radius:50%;align-items:center;justify-content:center;overflow:hidden;padding-top:10px" alt=Luiz Ricardo Gonçalves Felipe/>
             <br />
-            <sub style="font-size:14px"><b>Pedro Afonso</b></sub>
+            <sub style="font-size:14px"><b>Luiz Ricardo Gonçalves Felipe</b></sub>
         </a>
     </td>
     <td align="center" style="word-wrap: break-word; width: 150.0; height: 150.0">
@@ -276,10 +276,10 @@ Check the [API Reference](https://github.com/asternic/wuzapi/blob/main/API.md)
         </a>
     </td>
     <td align="center" style="word-wrap: break-word; width: 150.0; height: 150.0">
-        <a href=https://github.com/luizrgf2>
-            <img src=https://avatars.githubusercontent.com/u/71092163?v=4 width="100;"  style="border-radius:50%;align-items:center;justify-content:center;overflow:hidden;padding-top:10px" alt=Luiz Ricardo Gonçalves Felipe/>
+        <a href=https://github.com/pedroafonso18>
+            <img src=https://avatars.githubusercontent.com/u/157052926?v=4 width="100;"  style="border-radius:50%;align-items:center;justify-content:center;overflow:hidden;padding-top:10px" alt=Pedro Afonso/>
             <br />
-            <sub style="font-size:14px"><b>Luiz Ricardo Gonçalves Felipe</b></sub>
+            <sub style="font-size:14px"><b>Pedro Afonso</b></sub>
         </a>
     </td>
 </tr>
@@ -292,17 +292,17 @@ Check the [API Reference](https://github.com/asternic/wuzapi/blob/main/API.md)
         </a>
     </td>
     <td align="center" style="word-wrap: break-word; width: 150.0; height: 150.0">
-        <a href=https://github.com/andreydruz>
-            <img src=https://avatars.githubusercontent.com/u/976438?v=4 width="100;"  style="border-radius:50%;align-items:center;justify-content:center;overflow:hidden;padding-top:10px" alt=andreydruz/>
-            <br />
-            <sub style="font-size:14px"><b>andreydruz</b></sub>
-        </a>
-    </td>
-    <td align="center" style="word-wrap: break-word; width: 150.0; height: 150.0">
         <a href=https://github.com/vitorsilvalima>
             <img src=https://avatars.githubusercontent.com/u/9752658?v=4 width="100;"  style="border-radius:50%;align-items:center;justify-content:center;overflow:hidden;padding-top:10px" alt=Vitor Silva Lima/>
             <br />
             <sub style="font-size:14px"><b>Vitor Silva Lima</b></sub>
+        </a>
+    </td>
+    <td align="center" style="word-wrap: break-word; width: 150.0; height: 150.0">
+        <a href=https://github.com/andreydruz>
+            <img src=https://avatars.githubusercontent.com/u/976438?v=4 width="100;"  style="border-radius:50%;align-items:center;justify-content:center;overflow:hidden;padding-top:10px" alt=andreydruz/>
+            <br />
+            <sub style="font-size:14px"><b>andreydruz</b></sub>
         </a>
     </td>
     <td align="center" style="word-wrap: break-word; width: 150.0; height: 150.0">

@@ -1875,7 +1875,8 @@ func (s *server) SendMessage() http.HandlerFunc {
 		Phone       string
 		Body        string
 		Id          string
-		ContextInfo waE2E.ContextInfo
+        ContextInfo waE2E.ContextInfo
+        QuotedText  string `json:"QuotedText,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1927,13 +1928,19 @@ func (s *server) SendMessage() http.HandlerFunc {
 			},
 		}
 
-		if t.ContextInfo.StanzaID != nil {
-			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
-			}
-		}
+        if t.ContextInfo.StanzaID != nil {
+            qm := &waE2E.Message{}
+            if t.QuotedText != "" {
+                qm.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
+                    Text: proto.String(t.QuotedText),
+                }
+            }
+            msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
+                StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+                Participant:   proto.String(*t.ContextInfo.Participant),
+                QuotedMessage: qm,
+            }
+        }
 		if t.ContextInfo.MentionedJID != nil {
 			if msg.ExtendedTextMessage.ContextInfo == nil {
 				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}

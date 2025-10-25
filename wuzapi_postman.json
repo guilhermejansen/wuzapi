@@ -319,6 +319,76 @@
             "description": "Remove S3 configuration"
           },
           "response": []
+        },
+        {
+          "name": "HMAC Configuration",
+          "item": [
+            {
+              "name": "Configure HMAC Key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "token",
+                    "value": "{{token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"hmac_key\": \"your_hmac_key_minimum_32_characters_long_here\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/session/hmac/config",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["session", "hmac", "config"]
+                },
+                "description": "Configure HMAC key for webhook signing"
+              },
+              "response": []
+            },
+            {
+              "name": "Get HMAC Configuration",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "token",
+                    "value": "{{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/session/hmac/config",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["session", "hmac", "config"]
+                },
+                "description": "Get HMAC configuration status"
+              },
+              "response": []
+            },
+            {
+              "name": "Delete HMAC Configuration",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "token",
+                    "value": "{{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/session/hmac/config",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["session", "hmac", "config"]
+                },
+                "description": "Delete HMAC configuration"
+              },
+              "response": []
+            }
+          ]
         }
       ]
     },
@@ -786,7 +856,7 @@
             },
             "description": "Delete a message from a chat."
           },
-          "response": [ ]
+          "response": []
         }
       ]
     },
@@ -944,7 +1014,7 @@
             },
             "description": "Create a new WhatsApp group with specified name and participants"
           },
-          "response": [ ]
+          "response": []
         },
         {
           "name": "Set Group Locked",
@@ -965,7 +1035,7 @@
             },
             "description": "Configure group as locked (only admins can alter info) or unlocked"
           },
-          "response": [ ]
+          "response": []
         },
         {
           "name": "Set Disappearing Timer",
@@ -986,7 +1056,7 @@
             },
             "description": "Configure disappearing messages. Use '24h', '7d', '90d', or 'off'"
           },
-          "response": [ ]
+          "response": []
         },
         {
           "name": "Remove Group Photo",
@@ -1007,7 +1077,7 @@
             },
             "description": "Remove the current photo from a WhatsApp group"
           },
-          "response": [ ]
+          "response": []
         },
         {
           "name": "List Groups",
@@ -1218,7 +1288,7 @@
             },
             "description": "Get info about a group invite code"
           },
-          "response": [ ]
+          "response": []
         },
         {
           "name": "Update Group Participants",
@@ -1239,7 +1309,7 @@
             },
             "description": "Add, remove, promote or demote participants from a group. Action can be 'add', 'remove', 'promote','demote'."
           },
-          "response": [ ]
+          "response": []
         }
       ]
     },

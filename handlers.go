@@ -5510,3 +5510,62 @@ func (s *server) saveOutgoingMessageToHistory(userID, chatJID, messageID, messag
 		}
 	}
 }
+
+// RejectCall rejects an incoming call
+func (s *server) RejectCall() http.HandlerFunc {
+
+	type rejectCallStruct struct {
+		CallFrom string `json:"call_from"`
+		CallID   string `json:"call_id"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var t rejectCallStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
+			return
+		}
+
+		if t.CallFrom == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing call_from in Payload"))
+			return
+		}
+
+		if t.CallID == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing call_id in Payload"))
+			return
+		}
+
+		callFrom, ok := parseJID(t.CallFrom)
+		if !ok {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not parse call_from"))
+			return
+		}
+
+		err = clientManager.GetWhatsmeowClient(txtid).RejectCall(callFrom, t.CallID)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error rejecting call: %v", err)))
+			return
+		}
+
+		log.Info().Str("call_id", t.CallID).Str("call_from", t.CallFrom).Msg("Call rejected")
+		response := map[string]interface{}{"Details": "Call rejected", "CallID": t.CallID}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+		return
+	}
+}

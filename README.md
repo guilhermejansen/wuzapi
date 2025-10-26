@@ -11,7 +11,7 @@ Whatsmeow does not use Puppeteer on headless Chrome, nor an Android emulator. It
 
 **Using this software in violation of WhatsApp’s Terms of Service can get your number banned**:  
 Be very careful—do not use this to send SPAM or anything similar. Use at your own risk. If you need to develop something for commercial purposes, contact a WhatsApp global solution provider and sign up for the WhatsApp Business API service instead.
- 
+
 ## Available endpoints
 
 * **Session:** Connect, disconnect, and log out from WhatsApp. Retrieve connection status and QR codes for scanning.
@@ -21,7 +21,27 @@ Be very careful—do not use this to send SPAM or anything similar. Use at your 
 * **Groups:** Create, delete and list groups, get info, get invite links, set participants, change group photos and names.
 * **Webhooks:** Set and get webhooks that will be called whenever events or messages are received.
 * **HMAC Configuration:** Configure HMAC keys for webhook security and signature verification.
- 
+
+### Webhook HMAC Signing
+
+When HMAC is configured, all webhooks include an `x-hmac-signature` header with SHA-256 HMAC signature.
+
+#### Signature Generation by Content-Type:
+
+**`application/json`**
+* Signed data: Raw JSON request body
+* Verification: Use the exact JSON received
+
+**`application/x-www-form-urlencoded`**
+* Signed data: URL-encoded form string (`key=value&key2=value2`)
+* Verification: Reconstruct the form string from received parameters
+
+**`multipart/form-data`** (file uploads)
+* Signed data: JSON representation of form fields (excluding files)
+* Verification: Create JSON from non-file form fields
+
+* Always verify signatures before processing webhooks
+
 ## Prerequisites
 
 **Required:**
@@ -95,6 +115,35 @@ cp .env.sample .env
 WUZAPI_ADMIN_TOKEN=your_admin_token_here
 ```
 
+#### Security Settings
+
+```
+WUZAPI_GLOBAL_ENCRYPTION_KEY=your_32_byte_encryption_key_here
+WUZAPI_GLOBAL_HMAC_KEY=your_global_hmac_key_here
+```
+
+#### Optional Settings
+
+```
+TZ=America/New_York
+WEBHOOK_FORMAT=json
+SESSION_DEVICE_NAME=WuzAPI
+WUZAPI_PORT=8080
+WUZAPI_GLOBAL_WEBHOOK=https://your-global-webhook.url
+```
+
+### Important Notes
+
+#### Auto-Generated Credentials
+If the following settings are not provided, they will be auto-generated:
+* `WUZAPI_ADMIN_TOKEN`: Random 32-character token
+* `WUZAPI_GLOBAL_ENCRYPTION_KEY`: Random 32-byte key for AES-256 encryption
+
+**Important**: Save auto-generated credentials to your `.env` file or you will lose access to encrypted data and admin functions on restart!
+
+#### Webhook Security
+* `WUZAPI_GLOBAL_HMAC_KEY`: Global HMAC key for webhook signing (minimum 32 characters)
+
 #### Database Configuration
 
 **For PostgreSQL:**
@@ -113,11 +162,10 @@ No database configuration needed - SQLite is used by default if no PostgreSQL se
 #### Optional Settings
 ```
 TZ=America/New_York
-WEBHOOK_FORMAT=json        # or "form" for the default
+WEBHOOK_FORMAT=json # or "form" for the default
 SESSION_DEVICE_NAME=WuzAPI
-WUZAPI_PORT=8080           # Port for the WuzAPI server
-WUZAPI_GLOBAL_WEBHOOK=     # Global webhook URL for all instances
-WUZAPI_GLOBAL_HMAC_KEY=    # Global HMAC key for webhook signing (min 32 chars)
+WUZAPI_PORT=8080 # Port for the WuzAPI server
+WUZAPI_GLOBAL_WEBHOOK= # Global webhook URL for all instances
 ```
 
 ### RabbitMQ Integration

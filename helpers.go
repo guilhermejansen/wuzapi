@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -75,11 +78,11 @@ func updateUserInfo(values interface{}, field string, value string) interface{} 
 
 // webhook for regular messages
 func callHook(myurl string, payload map[string]string, id string) {
-	callHookWithHmac(myurl, payload, id, "")
+	callHookWithHmac(myurl, payload, id, nil)
 }
 
 // webhook for regular messages with HMAC
-func callHookWithHmac(myurl string, payload map[string]string, id string, hmacKey string) {
+func callHookWithHmac(myurl string, payload map[string]string, id string, encryptedHmacKey []byte) {
 	log.Info().Str("url", myurl).Msg("Sending POST to client " + id)
 
 	// Log the payload map
@@ -115,9 +118,14 @@ func callHookWithHmac(myurl string, payload map[string]string, id string, hmacKe
 
 		// Generate HMAC signature if key exists
 		var hmacSignature string
-		if hmacKey != "" && len(jsonBody) > 0 {
-			hmacSignature = generateHmacSignature(jsonBody, hmacKey)
-			log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature")
+		var err error
+		if len(encryptedHmacKey) > 0 && len(jsonBody) > 0 {
+			hmacSignature, err = generateHmacSignature(jsonBody, encryptedHmacKey)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to generate HMAC signature")
+			} else {
+				log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature")
+			}
 		}
 
 		req := client.R().
@@ -134,22 +142,26 @@ func callHookWithHmac(myurl string, payload map[string]string, id string, hmacKe
 			log.Debug().Str("error", postErr.Error())
 		}
 	} else {
-		// Default: send as form-urlencoded
-		// For form data, we'll create a JSON representation for HMAC
-		jsonPayload, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			log.Error().Err(marshalErr).Msg("Failed to marshal payload for HMAC")
-		}
-
-		// Generate HMAC signature if key exists
+		/// Default: send as form-urlencoded
+		// Generate HMAC signature if encrypted key exists
 		var hmacSignature string
-		if hmacKey != "" && len(jsonPayload) > 0 {
-			hmacSignature = generateHmacSignature(jsonPayload, hmacKey)
-			log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature")
+		var err error
+		if len(encryptedHmacKey) > 0 {
+			formData := url.Values{}
+			for k, v := range payload {
+				formData.Add(k, v)
+			}
+			formString := formData.Encode() // "token=abc&message=hello"
+
+			hmacSignature, err = generateHmacSignature([]byte(formString), encryptedHmacKey)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to generate HMAC signature")
+			} else {
+				log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature for form-data")
+			}
 		}
 
 		req := client.R().SetFormData(payload)
-
 		// Add HMAC signature header if available
 		if hmacSignature != "" {
 			req.SetHeader("x-hmac-signature", hmacSignature)
@@ -164,11 +176,11 @@ func callHookWithHmac(myurl string, payload map[string]string, id string, hmacKe
 
 // webhook for messages with file attachments
 func callHookFile(myurl string, payload map[string]string, id string, file string) error {
-	return callHookFileWithHmac(myurl, payload, id, file, "")
+	return callHookFileWithHmac(myurl, payload, id, file, nil)
 }
 
 // webhook for messages with file attachments and HMAC
-func callHookFileWithHmac(myurl string, payload map[string]string, id string, file string, hmacKey string) error {
+func callHookFileWithHmac(myurl string, payload map[string]string, id string, file string, encryptedHmacKey []byte) error {
 	log.Info().Str("file", file).Str("url", myurl).Msg("Sending POST")
 
 	client := clientManager.GetHTTPClient(id)
@@ -185,13 +197,21 @@ func callHookFileWithHmac(myurl string, payload map[string]string, id string, fi
 
 	// Generate HMAC signature if key exists
 	var hmacSignature string
-	if hmacKey != "" {
-		jsonPayload, err := json.Marshal(finalPayload)
+	var jsonPayload []byte
+	var err error
+
+	if len(encryptedHmacKey) > 0 {
+		// Para multipart/form-data, assinar a representação JSON do payload final
+		jsonPayload, err = json.Marshal(finalPayload)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to marshal payload for HMAC")
 		} else {
-			hmacSignature = generateHmacSignature(jsonPayload, hmacKey)
-			log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature for file webhook")
+			hmacSignature, err = generateHmacSignature(jsonPayload, encryptedHmacKey)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to generate HMAC signature")
+			} else {
+				log.Debug().Str("hmacSignature", hmacSignature).Msg("Generated HMAC signature for file webhook")
+			}
 		}
 	}
 
@@ -266,12 +286,74 @@ func ProcessOutgoingMedia(userID string, contactJID string, messageID string, da
 }
 
 // generateHmacSignature generates HMAC-SHA256 signature for webhook payload
-func generateHmacSignature(payload []byte, secretKey string) string {
-	if secretKey == "" {
-		return ""
+func generateHmacSignature(payload []byte, encryptedHmacKey []byte) (string, error) {
+	if len(encryptedHmacKey) == 0 {
+		return "", nil
 	}
 
-	h := hmac.New(sha256.New, []byte(secretKey))
+	// Decrypt HMAC key
+	hmacKey, err := decryptHMACKey(encryptedHmacKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt HMAC key: %w", err)
+	}
+
+	// Generate HMAC
+	h := hmac.New(sha256.New, []byte(hmacKey))
 	h.Write(payload)
-	return hex.EncodeToString(h.Sum(nil))
+
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func encryptHMACKey(plainText string) ([]byte, error) {
+	if *globalEncryptionKey == "" {
+		return nil, fmt.Errorf("encryption key not configured")
+	}
+
+	block, err := aes.NewCipher([]byte(*globalEncryptionKey))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plainText), nil)
+	return ciphertext, nil
+}
+
+// decryptHMACKey decrypts HMAC key using AES-GCM
+func decryptHMACKey(encryptedData []byte) (string, error) {
+	if *globalEncryptionKey == "" {
+		return "", fmt.Errorf("encryption key not configured")
+	}
+
+	block, err := aes.NewCipher([]byte(*globalEncryptionKey))
+	if err != nil {
+		return "", fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(encryptedData) < nonceSize {
+		return "", fmt.Errorf("ciphertext too short")
+	}
+
+	nonce, ciphertext := encryptedData[:nonceSize], encryptedData[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt: %w", err)
+	}
+
+	return string(plaintext), nil
 }

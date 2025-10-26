@@ -61,15 +61,15 @@ func sendToGlobalWebHook(jsonData []byte, token string, userID string) {
 			"userID":       userID,
 			"instanceName": instance_name,
 		}
-		callHookWithHmac(*globalWebhook, globalData, userID, *globalHMACKey)
+		callHookWithHmac(*globalWebhook, globalData, userID, globalHMACKeyEncrypted)
 	}
 }
 
 func sendToUserWebHook(webhookurl string, path string, jsonData []byte, userID string, token string) {
-	sendToUserWebHookWithHmac(webhookurl, path, jsonData, userID, token, "")
+	sendToUserWebHookWithHmac(webhookurl, path, jsonData, userID, token, nil)
 }
 
-func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, userID string, token string, hmacKey string) {
+func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, userID string, token string, encryptedHmacKey []byte) {
 
 	instance_name := ""
 	userinfo, found := userinfocache.Get(token)
@@ -88,12 +88,12 @@ func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, 
 		log.Info().Str("url", webhookurl).Msg("Calling user webhook")
 
 		if path == "" {
-			go callHookWithHmac(webhookurl, data, userID, hmacKey)
+			go callHookWithHmac(webhookurl, data, userID, encryptedHmacKey)
 		} else {
 			// Create a channel to capture the error from the goroutine
 			errChan := make(chan error, 1)
 			go func() {
-				err := callHookFileWithHmac(webhookurl, data, userID, path, hmacKey)
+				err := callHookFileWithHmac(webhookurl, data, userID, path, encryptedHmacKey)
 				errChan <- err
 			}()
 
@@ -188,13 +188,19 @@ func sendEventWithWebHook(mycli *MyClient, postmap map[string]interface{}, path 
 	}
 
 	// Get HMAC key for this user
-	hmacKey := ""
+	var encryptedHmacKey []byte
 	if userinfo, found := userinfocache.Get(mycli.token); found {
-		hmacKey = userinfo.(Values).Get("HmacKey")
+		encryptedB64 := userinfo.(Values).Get("HmacKeyEncrypted")
+		if encryptedB64 != "" {
+			var err error
+			encryptedHmacKey, err = base64.StdEncoding.DecodeString(encryptedB64)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to decode HMAC key from cache")
+			}
+		}
 	}
 
-	// Call user webhook if configured
-	sendToUserWebHookWithHmac(webhookurl, path, jsonData, mycli.userID, mycli.token, hmacKey)
+	sendToUserWebHookWithHmac(webhookurl, path, jsonData, mycli.userID, mycli.token, encryptedHmacKey)
 
 	// Get global webhook if configured
 	go sendToGlobalWebHook(jsonData, mycli.token, mycli.userID)
@@ -216,7 +222,7 @@ func checkIfSubscribedToEvent(subscribedEvents []string, eventType string, userI
 
 // Connects to Whatsapp Websocket on server startup if last state was connected
 func (s *server) connectOnStartup() {
-	rows, err := s.db.Queryx("SELECT id,name,token,jid,webhook,events,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,media_delivery,COALESCE(history, 0) as history,COALESCE(hmac_key, '') as hmac_key FROM users WHERE connected=1")
+	rows, err := s.db.Queryx("SELECT id,name,token,jid,webhook,events,proxy_url,CASE WHEN s3_enabled THEN 'true' ELSE 'false' END AS s3_enabled,media_delivery,COALESCE(history, 0) as history,hmac_key FROM users WHERE connected=1")
 	if err != nil {
 		log.Error().Err(err).Msg("DB Problem")
 		return
@@ -233,12 +239,17 @@ func (s *server) connectOnStartup() {
 		s3_enabled := ""
 		media_delivery := ""
 		var history int
-		hmac_key := ""
+		var hmac_key []byte
 		err = rows.Scan(&txtid, &name, &token, &jid, &webhook, &events, &proxy_url, &s3_enabled, &media_delivery, &history, &hmac_key)
 		if err != nil {
 			log.Error().Err(err).Msg("DB Problem")
 			return
 		} else {
+			hmacKeyEncrypted := ""
+			if len(hmac_key) > 0 {
+				hmacKeyEncrypted = base64.StdEncoding.EncodeToString(hmac_key)
+			}
+
 			log.Info().Str("token", token).Msg("Connect to Whatsapp on startup")
 			v := Values{map[string]string{
 				"Id":            txtid,
@@ -251,7 +262,7 @@ func (s *server) connectOnStartup() {
 				"S3Enabled":     s3_enabled,
 				"MediaDelivery": media_delivery,
 				"History":       fmt.Sprintf("%d", history),
-				"HmacKey":       hmac_key,
+				"HmacKeyEncrypted":       hmacKeyEncrypted,
 			}}
 			userinfocache.Set(token, v, cache.NoExpiration)
 			// Gets and set subscription to webhook events

@@ -203,6 +203,22 @@ The following _HMAC_ endpoints are used to configure and manage HMAC keys for we
 * All webhooks will include an `x-hmac-signature` header when HMAC is configured
 * Webhooks are signed using SHA-256 HMAC
 
+### Signature Generation by Content-Type:
+
+**`application/json`**
+* Signed data: Raw JSON request body
+* Verification: Use the exact JSON received
+
+**`application/x-www-form-urlencoded`**
+* Signed data: URL-encoded form string (`key=value&key2=value2`)
+* Verification: Reconstruct the form string from received parameters
+
+**`multipart/form-data`** (file uploads)
+* Signed data: JSON representation of form fields (excluding files)
+* Verification: Create JSON from non-file form fields
+
+* Always verify signatures before processing webhooks
+
 ---
 
 ## Configure HMAC Key

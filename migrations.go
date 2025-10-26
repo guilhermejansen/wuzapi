@@ -407,8 +407,8 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 		}
 	} else if migration.ID == 7 {
 		if db.DriverName() == "sqlite" {
-			// Add hmac_key column to users table for SQLite
-			err = addColumnIfNotExistsSQLite(tx, "users", "hmac_key", "TEXT DEFAULT ''")
+			// Add hmac_key column as BLOB for encrypted data in SQLite
+			err = addColumnIfNotExistsSQLite(tx, "users", "hmac_key", "BLOB")
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}
@@ -612,12 +612,12 @@ func addColumnIfNotExistsSQLite(tx *sqlx.Tx, tableName, columnName, columnDef st
 }
 
 const addHmacKeySQL = `
--- PostgreSQL version
+-- PostgreSQL version - Add encrypted HMAC key column
 DO $$
 BEGIN
-    -- Add hmac_key column to users table if it doesn't exist
+    -- Add hmac_key column as BYTEA for encrypted data
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'hmac_key') THEN
-        ALTER TABLE users ADD COLUMN hmac_key TEXT DEFAULT '';
+        ALTER TABLE users ADD COLUMN hmac_key BYTEA;
     END IF;
 END $$;
 

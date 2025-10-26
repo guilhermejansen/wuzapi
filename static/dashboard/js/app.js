@@ -1796,26 +1796,24 @@ async function loadHmacConfig() {
     });
     
     if (res.ok) {
-      const data = await res.json();
-      if (data.code === 200 && data.data) {
-        const hmacConfig = data.data;
-        $('#hmacKey').val(hmacConfig.hmac_key === '***' ? '' : hmacConfig.hmac_key);
-        
-        // Show/hide delete button based on whether config exists
-        if (hmacConfig.hmac_key === '***') {
-          $('#deleteHmacConfig').show();
-        } else {
-          $('#deleteHmacConfig').hide();
-        }
+      const hmacConfig = await res.json();
+      
+      $('#hmacKey').val(hmacConfig.hmac_key === '***' ? '' : hmacConfig.hmac_key);
+      
+      if (hmacConfig.hmac_key === '***') {
+        $('#deleteHmacConfig').show();
       } else {
-        // No config found, hide delete button and set defaults
         $('#deleteHmacConfig').hide();
-        $('#hmacKey').val('');
       }
+    } else {
+      // No config found or error
+      $('#deleteHmacConfig').hide();
+      $('#hmacKey').val('');
     }
   } catch (error) {
     console.error('Error loading HMAC config:', error);
     $('#deleteHmacConfig').hide();
+    $('#hmacKey').val('');
   }
 }
 
@@ -1848,14 +1846,14 @@ async function saveHmacConfig() {
       body: JSON.stringify(config)
     });
     
-    const data = await res.json();
-    if (data.success) {
+    const response = await res.json();
+    
+    if (res.ok && response.Details) {
       showSuccess('HMAC configuration saved successfully');
-      // Show delete button since we now have a configuration
       $('#deleteHmacConfig').show();
       $('#modalHmacConfig').modal('hide');
     } else {
-      showError('Failed to save HMAC configuration: ' + (data.error || 'Unknown error'));
+      showError('Failed to save HMAC configuration: ' + (response.error || 'Unknown error'));
     }
   } catch (error) {
     showError('Error saving HMAC configuration');
@@ -1882,8 +1880,10 @@ async function deleteHmacConfig() {
       headers: myHeaders
     });
     
-    const data = await res.json();
-    if (data.success) {
+    const response = await res.json();
+    
+    // Nova verificação - estrutura direta sem "success"
+    if (res.ok && response.Details) {
       showSuccess('HMAC configuration deleted successfully');
       
       // Clear form field
@@ -1894,7 +1894,7 @@ async function deleteHmacConfig() {
       
       $('#modalHmacConfig').modal('hide');
     } else {
-      showError('Failed to delete HMAC configuration: ' + (data.error || 'Unknown error'));
+      showError('Failed to delete HMAC configuration: ' + (response.error || 'Unknown error'));
     }
   } catch (error) {
     showError('Error deleting HMAC configuration');

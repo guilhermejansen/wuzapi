@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -629,7 +630,6 @@ func (s *server) GetStatus() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userInfo := r.Context().Value("userinfo").(Values)
 
-		// Log all userinfo values (adicionar HasHmac no log)
 		log.Info().
 			Str("Id", userInfo.Get("Id")).
 			Str("Jid", userInfo.Get("Jid")).
@@ -639,7 +639,7 @@ func (s *server) GetStatus() http.HandlerFunc {
 			Str("Events", userInfo.Get("Events")).
 			Str("Proxy", userInfo.Get("Proxy")).
 			Str("History", userInfo.Get("History")).
-			Str("HasHmac", userInfo.Get("HasHmac")). // ← Adicionar ao log
+			Str("HasHmac", userInfo.Get("HasHmac")).
 			Msg("User info values")
 
 		txtid := userInfo.Get("Id")
@@ -647,7 +647,6 @@ func (s *server) GetStatus() http.HandlerFunc {
 		isConnected := clientManager.GetWhatsmeowClient(txtid).IsConnected()
 		isLoggedIn := clientManager.GetWhatsmeowClient(txtid).IsLoggedIn()
 
-		// Get proxy_config (mantém query pois não está no cache)
 		var proxyURL string
 		s.db.QueryRow("SELECT proxy_url FROM users WHERE id = $1", txtid).Scan(&proxyURL)
 		proxyConfig := map[string]interface{}{
@@ -655,7 +654,6 @@ func (s *server) GetStatus() http.HandlerFunc {
 			"proxy_url": proxyURL,
 		}
 
-		// Get s3_config (mantém query pois não está no cache)
 		var s3Enabled bool
 		var s3Endpoint, s3Region, s3Bucket, s3AccessKey, s3PublicURL, s3MediaDelivery string
 		var s3PathStyle bool
@@ -673,7 +671,9 @@ func (s *server) GetStatus() http.HandlerFunc {
 			"retention_days": s3RetentionDays,
 		}
 
-		hmacConfigured := userInfo.Get("HasHmac") == "true"
+		var hmacKey string
+		s.db.QueryRow("SELECT hmac_key FROM users WHERE id = $1", txtid).Scan(&hmacKey)
+		hmacConfigured := hmacKey != ""
 
 		response := map[string]interface{}{
 			"id":              txtid,
@@ -5544,6 +5544,7 @@ func (s *server) ConfigureHmac() http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token")
 
 		decoder := json.NewDecoder(r.Body)
 		var t hmacConfigStruct
@@ -5577,6 +5578,15 @@ func (s *server) ConfigureHmac() http.HandlerFunc {
 			return
 		}
 
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HasHmac", "true").(Values)
+			hmacKeyEncrypted := base64.StdEncoding.EncodeToString(encryptedHmacKey)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HmacKeyEncrypted", hmacKeyEncrypted).(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated with HMAC configuration")
+		}
+
 		response := map[string]interface{}{
 			"Details": "HMAC configuration saved successfully",
 		}
@@ -5589,14 +5599,17 @@ func (s *server) GetHmacConfig() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
 
-		var config struct {
-			HmacKey string `json:"hmac_key" db:"hmac_key"`
-		}
-
-		err := s.db.Get(&config, `
-			SELECT hmac_key FROM users WHERE id = $1`, txtid)
+		var hmacKey []byte
+		err := s.db.QueryRow(`SELECT hmac_key FROM users WHERE id = $1`, txtid).Scan(&hmacKey)
 
 		if err != nil {
+			if err == sql.ErrNoRows {
+				s.respondWithJSON(w, http.StatusOK, map[string]interface{}{
+					"hmac_key": "",
+				})
+				return
+			}
+
 			log.Error().Err(err).Str("userID", txtid).Msg("Failed to get HMAC configuration from database")
 			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
 				"error": "failed to get HMAC configuration",
@@ -5604,14 +5617,17 @@ func (s *server) GetHmacConfig() http.HandlerFunc {
 			return
 		}
 
-		log.Debug().Str("userID", txtid).Bool("hasKey", config.HmacKey != "").Msg("Retrieved HMAC configuration from database")
+		log.Debug().Str("userID", txtid).Bool("hasKey", len(hmacKey) > 0).Msg("Retrieved HMAC configuration from database")
 
-		// Don't return the actual key for security - just indicate if it exists
-		if config.HmacKey != "" {
-			config.HmacKey = "***" // Mask HMAC key
+		response := map[string]interface{}{
+			"hmac_key": "",
 		}
 
-		s.respondWithJSON(w, http.StatusOK, config)
+		if len(hmacKey) > 0 {
+			response["hmac_key"] = "***" // Mask HMAC key
+		}
+
+		s.respondWithJSON(w, http.StatusOK, response)
 	}
 }
 
@@ -5619,16 +5635,24 @@ func (s *server) GetHmacConfig() http.HandlerFunc {
 func (s *server) DeleteHmacConfig() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token") // ← Pegar o token
 
 		// Clear HMAC key
-		_, err := s.db.Exec(`
-            UPDATE users SET hmac_key = NULL WHERE id = $1`, txtid)
+		_, err := s.db.Exec(`UPDATE users SET hmac_key = NULL WHERE id = $1`, txtid)
 
 		if err != nil {
 			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
 				"error": "failed to delete HMAC configuration",
 			})
 			return
+		}
+
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HasHmac", "false").(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HmacKeyEncrypted", "").(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated - HMAC configuration removed")
 		}
 
 		s.respondWithJSON(w, http.StatusOK, map[string]interface{}{

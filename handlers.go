@@ -671,9 +671,12 @@ func (s *server) GetStatus() http.HandlerFunc {
 			"retention_days": s3RetentionDays,
 		}
 
-		var hmacKey string
-		s.db.QueryRow("SELECT hmac_key FROM users WHERE id = $1", txtid).Scan(&hmacKey)
-		hmacConfigured := hmacKey != ""
+		var hmacKey []byte
+		err := s.db.QueryRow("SELECT hmac_key FROM users WHERE id = $1", txtid).Scan(&hmacKey)
+		if err != nil && err != sql.ErrNoRows {
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to query HMAC key")
+		}
+		hmacConfigured := len(hmacKey) > 0
 
 		response := map[string]interface{}{
 			"id":              txtid,

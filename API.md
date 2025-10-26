@@ -203,10 +203,6 @@ The following _HMAC_ endpoints are used to configure and manage HMAC keys for we
 * All webhooks will include an `x-hmac-signature` header when HMAC is configured
 * Webhooks are signed using SHA-256 HMAC
 
-## Webhook HMAC Signing
-
-When HMAC is configured, all webhooks include an `x-hmac-signature` header with SHA-256 HMAC signature.
-
 ### Signature Generation by Content-Type:
 
 **`application/json`**

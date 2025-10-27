@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,79 @@ type Values struct {
 
 func (v Values) Get(key string) string {
 	return v.m[key]
+}
+
+func (s *server) GetHealth() http.HandlerFunc {
+	type HealthResponse struct {
+		Status            string                 `json:"status"`
+		Timestamp         string                 `json:"timestamp"`
+		Uptime            string                 `json:"uptime"`
+		ActiveConnections int                    `json:"active_connections"`
+		TotalUsers        int                    `json:"total_users"`
+		ConnectedUsers    int                    `json:"connected_users"`
+		LoggedInUsers     int                    `json:"logged_in_users"`
+		MemoryStats       map[string]interface{} `json:"memory_stats"`
+		GoRoutines        int                    `json:"goroutines"`
+		Version           string                 `json:"version,omitempty"`
+	}
+
+	startTime := time.Now()
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		uptime := time.Since(startTime)
+
+		var totalUsers int
+		rows, err := s.db.Query("SELECT COUNT(*) FROM users")
+		if err == nil {
+			defer rows.Close()
+			if rows.Next() {
+				rows.Scan(&totalUsers)
+			}
+		}
+
+		clientManager.RLock()
+		activeConnections := len(clientManager.whatsmeowClients)
+		connectedUsers := 0
+		loggedInUsers := 0
+
+		for _, client := range clientManager.whatsmeowClients {
+			if client != nil {
+				if client.IsConnected() {
+					connectedUsers++
+				}
+				if client.IsLoggedIn() {
+					loggedInUsers++
+				}
+			}
+		}
+		clientManager.RUnlock()
+
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
+
+		memoryStats := map[string]interface{}{
+			"alloc_mb":       memStats.Alloc / 1024 / 1024,
+			"total_alloc_mb": memStats.TotalAlloc / 1024 / 1024,
+			"sys_mb":         memStats.Sys / 1024 / 1024,
+			"num_gc":         memStats.NumGC,
+		}
+
+		response := HealthResponse{
+			Status:            "ok",
+			Timestamp:         time.Now().UTC().Format(time.RFC3339),
+			Uptime:            uptime.String(),
+			ActiveConnections: activeConnections,
+			TotalUsers:        totalUsers,
+			ConnectedUsers:    connectedUsers,
+			LoggedInUsers:     loggedInUsers,
+			MemoryStats:       memoryStats,
+			GoRoutines:        runtime.NumGoroutine(),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(response)
+	}
 }
 
 // messageTypes moved to constants.go as supportedEventTypes

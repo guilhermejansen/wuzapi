@@ -2136,6 +2136,9 @@ definitions:
       - Phone
       - Content 
     properties:
+      Id:
+        type: string
+        example: "ABCDABCD1234"
       Phone:
         type: string
         example: "5491155553935"
@@ -2154,9 +2157,6 @@ definitions:
               example: Text for Button
             Type:
               type: quickreply|url|call
-      Id:
-        type: string
-        example: "ABCDABCD1234"
       ContextInfo:
         type: object
         required:
@@ -2175,12 +2175,12 @@ definitions:
       - Id
       - Phone
     properties:
-      Phone:
-        type: string
-        example: "5491155553934"
       Id:
         type: string
         example: "1234-abcd-21234"
+      Phone:
+        type: string
+        example: "5491155553934"
   Markread:
     type: object
     required:

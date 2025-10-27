@@ -106,11 +106,14 @@ func (s *server) GetHealth() http.HandlerFunc {
 			LoggedInUsers:     loggedInUsers,
 			MemoryStats:       memoryStats,
 			GoRoutines:        runtime.NumGoroutine(),
+			Version:           version,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Error().Err(err).Msg("Failed to write health check response")
+		}
 	}
 }
 

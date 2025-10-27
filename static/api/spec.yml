@@ -1045,7 +1045,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1067,7 +1067,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1089,7 +1089,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1098,6 +1098,28 @@ paths:
             application/json:
               schema:
                 example: {"code":200,"data":{"Data":"data:application/pdf;base64,iVBORw0KGgoA5CYII...=","Mimetype":"application/pdf"},"success":true}
+  /chat/downloadaudio:
+    post:
+      tags:
+        - Chat
+      summary: Downloads Audio from message
+      description: Downloads an Audio file from a message and returns it Base64 media encoded
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/DownloadMedia'
+
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: {"code": 200, "data": {"Data": "data:audio/ogg;base64,T2dnUwACAAAAAAA...=", "Mimetype": "audio/ogg"}, "success": true}
   /chat/presence:
     post:
       tags:
@@ -1204,6 +1226,39 @@ paths:
             application/json:
               schema:
                 example: { "code": 500, "error": "failed to get message history", "success": false }
+  /call/reject:
+    post:
+      tags:
+        - Call
+      summary: Reject an incoming call
+      description: Rejects an incoming WhatsApp call from a specific user. Requires the caller's JID and the call ID.
+      security:
+        - ApiKeyAuth: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/RejectCall'
+      responses:
+        200:
+          description: Call rejected successfully
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "Details": "Call rejected", "CallID": "ABCD1234567890" }, "success": true }
+        400:
+          description: Bad Request - Missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                example: { "code": 400, "error": "missing call_from in Payload", "success": false }
+        500:
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                example: { "code": 500, "error": "error rejecting call: connection failed", "success": false }
   /group/create:
     post:
       tags:
@@ -1737,7 +1792,7 @@ definitions:
         example: ["Message","ChatPresence"]
       Immediate:
         type: boolean
-  DownloadImage:
+  DownloadMedia:
     type: object
     required:
       - Url
@@ -2143,6 +2198,9 @@ definitions:
       - Phone
       - Content 
     properties:
+      Id:
+        type: string
+        example: "ABCDABCD1234"
       Phone:
         type: string
         example: "5491155553935"
@@ -2161,9 +2219,6 @@ definitions:
               example: Text for Button
             Type:
               type: quickreply|url|call
-      Id:
-        type: string
-        example: "ABCDABCD1234"
       ContextInfo:
         type: object
         required:
@@ -2180,10 +2235,14 @@ definitions:
     type: object
     required:
       - Id
+      - Phone
     properties:
       Id:
         type: string
         example: "1234-abcd-21234"
+      Phone:
+        type: string
+        example: "5491155553934"
   Markread:
     type: object
     required:
@@ -2199,6 +2258,20 @@ definitions:
       Sender:
         type: string
         example: 5491155553111.0:1@s.whatsapp.net
+  RejectCall:
+    type: object
+    required:
+      - call_from
+      - call_id
+    properties:
+      call_from:
+        type: string
+        description: The JID (WhatsApp ID) of the caller to reject
+        example: "5491155553934@s.whatsapp.net"
+      call_id:
+        type: string
+        description: The unique identifier of the call to reject
+        example: "ABCD1234567890EFGH"
   Pairphone:
     type: object
     required:

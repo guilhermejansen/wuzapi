@@ -2113,6 +2113,10 @@ definitions:
           Participant: 
             type: string
             example: "5491155553935@s.whatsapp.net"
+          QuotedText:
+            type: string
+            description: "Text content of the message being replied to (for displaying quote preview)"
+            example: "Original message text"
   MessageImage:
     type: object
     required: 

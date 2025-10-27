@@ -520,6 +520,33 @@
           "response": []
         },
         {
+          "name": "Send Text Message Reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"Body\": \"This is my reply\",\n  \"Id\": \"ABCDABCD1234-reply\",\n  \"ContextInfo\": {\n    \"StanzaId\": \"ABCDABCD1234\",\n    \"Participant\": \"5491155553935@s.whatsapp.net\",\n    \"QuotedText\": \"Original message text\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/chat/send/text",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "send", "text"]
+            },
+            "description": "Send text message as a reply with quoted text preview"
+          },
+          "response": []
+        },
+        {
           "name": "Edit Message",
           "request": {
             "method": "POST",

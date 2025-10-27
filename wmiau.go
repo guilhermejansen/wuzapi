@@ -1331,7 +1331,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.ClientOutdated:
 		postmap["type"] = "ClientOutdated"
 		dowebhook = 1
-		log.Info().Msg("Client outdated")
+log.Warn().Msg("Client outdated")
 	case *events.TemporaryBan:
 		postmap["type"] = "TemporaryBan"
 		dowebhook = 1

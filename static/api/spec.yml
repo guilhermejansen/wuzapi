@@ -983,7 +983,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1005,7 +1005,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1027,7 +1027,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1049,7 +1049,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1057,16 +1057,7 @@ paths:
           content:
             application/json:
               schema:
-                example:
-                  {
-                    "code": 200,
-                    "data":
-                      {
-                        "Data": "data:audio/ogg;base64,T2dnUwACAAAAAAA...=",
-                        "Mimetype": "audio/ogg",
-                      },
-                    "success": true,
-                  }
+                example: {"code": 200, "data": {"Data": "data:audio/ogg;base64,T2dnUwACAAAAAAA...=", "Mimetype": "audio/ogg"}, "success": true}
   /chat/presence:
     post:
       tags:
@@ -1739,7 +1730,7 @@ definitions:
         example: ["Message","ChatPresence"]
       Immediate:
         type: boolean
-  DownloadImage:
+  DownloadMedia:
     type: object
     required:
       - Url

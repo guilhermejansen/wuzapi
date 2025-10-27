@@ -535,7 +535,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"Body\": \"This is my reply\",\n  \"Id\": \"ABCDABCD1234-reply\",\n  \"ContextInfo\": {\n    \"StanzaId\": \"ABCDABCD1234\",\n    \"Participant\": \"5491155553935@s.whatsapp.net\",\n    \"QuotedText\": \"Original message text\"\n  }\n}"
+              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"Body\": \"This is my reply\",\n  \"Id\": \"ABCDABCD1234-reply\",\n  \"QuotedText\": \"Original message text\",\n  \"ContextInfo\": {\n    \"StanzaId\": \"ABCDABCD1234\",\n    \"Participant\": \"5491155553935@s.whatsapp.net\"\n  }\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/chat/send/text",

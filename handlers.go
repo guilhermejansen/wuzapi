@@ -2011,7 +2011,9 @@ func (s *server) SendMessage() http.HandlerFunc {
                 qm.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
                     Text: proto.String(t.QuotedText),
                 }
-            }
+            } else {
+				qm.Conversation = proto.String("")
+			}
             msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
                 StanzaID:      proto.String(*t.ContextInfo.StanzaID),
                 Participant:   proto.String(*t.ContextInfo.Participant),

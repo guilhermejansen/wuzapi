@@ -1036,6 +1036,37 @@ paths:
             application/json:
               schema:
                 example: {"code":200,"data":{"Data":"data:application/pdf;base64,iVBORw0KGgoA5CYII...=","Mimetype":"application/pdf"},"success":true}
+  /chat/downloadaudio:
+    post:
+      tags:
+        - Chat
+      summary: Downloads Audio from message
+      description: Downloads an Audio file from a message and returns it Base64 media encoded
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/DownloadImage'
+
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example:
+                  {
+                    "code": 200,
+                    "data":
+                      {
+                        "Data": "data:audio/ogg;base64,T2dnUwACAAAAAAA...=",
+                        "Mimetype": "audio/ogg",
+                      },
+                    "success": true,
+                  }
   /chat/presence:
     post:
       tags:
@@ -2151,7 +2182,11 @@ definitions:
     type: object
     required:
       - Id
+      - Phone
     properties:
+      Phone:
+        type: string
+        example: "5491155553934"
       Id:
         type: string
         example: "1234-abcd-21234"

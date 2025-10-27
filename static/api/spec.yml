@@ -464,6 +464,68 @@ paths:
           description: S3 is not enabled or configuration error
         500:
           description: S3 connection test failed
+  /session/hmac/config:
+    post:
+      tags:
+        - Session 
+      summary: Configure HMAC key for webhook signing
+      description: "Sets HMAC key for webhook signature verification. Once configured, all webhooks will include x-hmac-signature header.\n\n**Security Notes:**\n- HMAC key must be at least 32 characters long\n- Key cannot be retrieved after saving\n- To update key, send new request with new key"
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hmac_key:
+                  type: string
+                  description: HMAC key for webhook signing (min 32 chars)
+                  example: "your_hmac_key_minimum_32_characters_long_here"
+              required:
+                - hmac_key
+      responses:
+        200:
+          description: HMAC configuration saved
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "Details": "HMAC configuration saved successfully" }, "success": true }
+        400:
+          description: Invalid HMAC key
+          content:
+            application/json:
+              schema:
+                example: { "code": 400, "data": "HMAC key must be at least 32 characters long", "success": false }
+    get:
+      tags:
+        - Session 
+      summary: Get HMAC configuration status
+      description: "Retrieves HMAC configuration status. For security reasons, the actual key is never returned - only masked with '***' if configured."
+      security:
+        - ApiKeyAuth: []
+      responses:
+        200:
+          description: HMAC status
+          content:
+            application/json:
+              schema:
+                example: { "hmac_key": "***" }
+    delete:
+      tags:
+        - Session 
+      summary: Delete HMAC configuration
+      description: "Removes HMAC configuration and disables webhook signing."
+      security:
+        - ApiKeyAuth: []
+      responses:
+        200:
+          description: HMAC configuration removed
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "Details": "HMAC configuration deleted successfully" }, "success": true }
   /user/info:
     post:
       tags:

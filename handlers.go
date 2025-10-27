@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,6 +64,7 @@ func (s *server) authalice(next http.Handler) http.Handler {
 		events := ""
 		proxy_url := ""
 		qrcode := ""
+		var hasHmac bool // ← Nova variável para status HMAC
 
 		// Get token from headers or uri parameters
 		token := r.Header.Get("token")
@@ -74,7 +76,7 @@ func (s *server) authalice(next http.Handler) http.Handler {
 		if !found {
 			log.Info().Msg("Looking for user information in DB")
 			// Checks DB from matching user and store user values in context
-			rows, err := s.db.Query("SELECT id,name,webhook,jid,events,proxy_url,qrcode,history FROM users WHERE token=$1 LIMIT 1", token)
+			rows, err := s.db.Query("SELECT id,name,webhook,jid,events,proxy_url,qrcode,history,hmac_key IS NOT NULL AND length(hmac_key) > 0 FROM users WHERE token=$1 LIMIT 1", token)
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, err)
 				return
@@ -82,7 +84,7 @@ func (s *server) authalice(next http.Handler) http.Handler {
 			defer rows.Close()
 			var history sql.NullInt64
 			for rows.Next() {
-				err = rows.Scan(&txtid, &name, &webhook, &jid, &events, &proxy_url, &qrcode, &history)
+				err = rows.Scan(&txtid, &name, &webhook, &jid, &events, &proxy_url, &qrcode, &history, &hasHmac)
 				if err != nil {
 					s.Respond(w, r, http.StatusInternalServerError, err)
 					return
@@ -105,6 +107,7 @@ func (s *server) authalice(next http.Handler) http.Handler {
 					"Events":  events,
 					"Qrcode":  qrcode,
 					"History": historyStr,
+					"HasHmac": strconv.FormatBool(hasHmac),
 				}}
 
 				userinfocache.Set(token, v, cache.NoExpiration)
@@ -624,12 +627,9 @@ func (s *server) PairPhone() http.HandlerFunc {
 
 // Gets Connected and LoggedIn Status
 func (s *server) GetStatus() http.HandlerFunc {
-
 	return func(w http.ResponseWriter, r *http.Request) {
-
 		userInfo := r.Context().Value("userinfo").(Values)
 
-		// Log all userinfo values
 		log.Info().
 			Str("Id", userInfo.Get("Id")).
 			Str("Jid", userInfo.Get("Jid")).
@@ -639,30 +639,21 @@ func (s *server) GetStatus() http.HandlerFunc {
 			Str("Events", userInfo.Get("Events")).
 			Str("Proxy", userInfo.Get("Proxy")).
 			Str("History", userInfo.Get("History")).
+			Str("HasHmac", userInfo.Get("HasHmac")).
 			Msg("User info values")
 
-		log.Info().Str("Name", userInfo.Get("Name")).Msg("User name")
-
 		txtid := userInfo.Get("Id")
-
-		/*
-			if clientManager.GetWhatsmeowClient(txtid) == nil {
-				s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
-				return
-			}
-		*/
 
 		isConnected := clientManager.GetWhatsmeowClient(txtid).IsConnected()
 		isLoggedIn := clientManager.GetWhatsmeowClient(txtid).IsLoggedIn()
 
-		// Get proxy_config
 		var proxyURL string
 		s.db.QueryRow("SELECT proxy_url FROM users WHERE id = $1", txtid).Scan(&proxyURL)
 		proxyConfig := map[string]interface{}{
 			"enabled":   proxyURL != "",
 			"proxy_url": proxyURL,
 		}
-		// Get s3_config
+
 		var s3Enabled bool
 		var s3Endpoint, s3Region, s3Bucket, s3AccessKey, s3PublicURL, s3MediaDelivery string
 		var s3PathStyle bool
@@ -679,20 +670,29 @@ func (s *server) GetStatus() http.HandlerFunc {
 			"media_delivery": s3MediaDelivery,
 			"retention_days": s3RetentionDays,
 		}
+
+		var hmacKey []byte
+		err := s.db.QueryRow("SELECT hmac_key FROM users WHERE id = $1", txtid).Scan(&hmacKey)
+		if err != nil && err != sql.ErrNoRows {
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to query HMAC key")
+		}
+		hmacConfigured := len(hmacKey) > 0
+
 		response := map[string]interface{}{
-			"id":           txtid,
-			"name":         userInfo.Get("Name"),
-			"connected":    isConnected,
-			"loggedIn":     isLoggedIn,
-			"token":        userInfo.Get("Token"),
-			"jid":          userInfo.Get("Jid"),
-			"webhook":      userInfo.Get("Webhook"),
-			"events":       userInfo.Get("Events"),
-			"proxy_url":    userInfo.Get("Proxy"),
-			"qrcode":       userInfo.Get("Qrcode"),
-			"history":      userInfo.Get("History"),
-			"proxy_config": proxyConfig,
-			"s3_config":    s3Config,
+			"id":              txtid,
+			"name":            userInfo.Get("Name"),
+			"connected":       isConnected,
+			"loggedIn":        isLoggedIn,
+			"token":           userInfo.Get("Token"),
+			"jid":             userInfo.Get("Jid"),
+			"webhook":         userInfo.Get("Webhook"),
+			"events":          userInfo.Get("Events"),
+			"proxy_url":       userInfo.Get("Proxy"),
+			"qrcode":          userInfo.Get("Qrcode"),
+			"history":         userInfo.Get("History"),
+			"proxy_config":    proxyConfig,
+			"s3_config":       s3Config,
+			"hmac_configured": hmacConfigured,
 		}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
@@ -4311,6 +4311,7 @@ func (s *server) AddUser() http.HandlerFunc {
 			Events      string       `json:"events,omitempty"`
 			ProxyConfig *ProxyConfig `json:"proxyConfig,omitempty"`
 			S3Config    *S3Config    `json:"s3Config,omitempty"`
+			HmacKey     string       `json:"hmacKey,omitempty"`
 			History     int          `json:"history,omitempty"`
 		}
 
@@ -4338,6 +4339,32 @@ func (s *server) AddUser() http.HandlerFunc {
 		}
 		if user.Webhook == "" {
 			user.Webhook = ""
+		}
+
+		// Encrypt HMAC key if provided
+		var encryptedHmacKey []byte
+		if user.HmacKey != "" {
+			// Validate HMAC key length
+			if len(user.HmacKey) < 32 {
+				s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+					"code":    http.StatusBadRequest,
+					"error":   "HMAC key must be at least 32 characters long",
+					"success": false,
+				})
+				return
+			}
+
+			var err error
+			encryptedHmacKey, err = encryptHMACKey(user.HmacKey)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to encrypt HMAC key")
+				s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+					"code":    http.StatusInternalServerError,
+					"error":   "failed to encrypt HMAC key",
+					"success": false,
+				})
+				return
+			}
 		}
 
 		// Check for existing user
@@ -4389,11 +4416,11 @@ func (s *server) AddUser() http.HandlerFunc {
 			return
 		}
 
-		// Insert user with all proxy and S3 fields
+		// Insert user with all proxy, S3 and HMAC fields
 		if _, err = s.db.Exec(
-			"INSERT INTO users (id, name, token, webhook, expiration, events, jid, qrcode, proxy_url, s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_secret_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days, history) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)",
+			"INSERT INTO users (id, name, token, webhook, expiration, events, jid, qrcode, proxy_url, s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_secret_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days, hmac_key, history) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)",
 			id, user.Name, user.Token, user.Webhook, user.Expiration, user.Events, "", "", user.ProxyConfig.ProxyURL,
-			user.S3Config.Enabled, user.S3Config.Endpoint, user.S3Config.Region, user.S3Config.Bucket, user.S3Config.AccessKey, user.S3Config.SecretKey, user.S3Config.PathStyle, user.S3Config.PublicURL, user.S3Config.MediaDelivery, user.S3Config.RetentionDays, user.History,
+			user.S3Config.Enabled, user.S3Config.Endpoint, user.S3Config.Region, user.S3Config.Bucket, user.S3Config.AccessKey, user.S3Config.SecretKey, user.S3Config.PathStyle, user.S3Config.PublicURL, user.S3Config.MediaDelivery, user.S3Config.RetentionDays, encryptedHmacKey, user.History,
 		); err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("admin DB error")
 			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
@@ -4446,6 +4473,7 @@ func (s *server) AddUser() http.HandlerFunc {
 			"events":       user.Events,
 			"proxy_config": proxyConfig,
 			"s3_config":    s3Config,
+			"hmac_key":     user.HmacKey != "",
 		}
 		s.respondWithJSON(w, http.StatusCreated, map[string]interface{}{
 			"code":    http.StatusCreated,
@@ -5509,6 +5537,131 @@ func (s *server) saveOutgoingMessageToHistory(userID, chatJID, messageID, messag
 			}
 		}
 	}
+}
+
+// Configure HMAC
+func (s *server) ConfigureHmac() http.HandlerFunc {
+	type hmacConfigStruct struct {
+		HmacKey string `json:"hmac_key"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+
+		decoder := json.NewDecoder(r.Body)
+		var t hmacConfigStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
+			return
+		}
+
+		// Validate HMAC key (minimum 32 characters for security)
+		if len(t.HmacKey) < 32 {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("HMAC key must be at least 32 characters long"))
+			return
+		}
+
+		// Encrypt HMAC key before storing
+		encryptedHmacKey, err := encryptHMACKey(t.HmacKey)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to encrypt HMAC key")
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to encrypt HMAC key"))
+			return
+		}
+
+		// Update database with ENCRYPTED key
+		_, err = s.db.Exec(`
+            UPDATE users SET hmac_key = $1 WHERE id = $2`,
+			encryptedHmacKey, txtid)
+
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save HMAC configuration"))
+			return
+		}
+
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HasHmac", "true").(Values)
+			hmacKeyEncrypted := base64.StdEncoding.EncodeToString(encryptedHmacKey)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HmacKeyEncrypted", hmacKeyEncrypted).(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated with HMAC configuration")
+		}
+
+		response := map[string]interface{}{
+			"Details": "HMAC configuration saved successfully",
+		}
+		s.respondWithJSON(w, http.StatusOK, response)
+	}
+}
+
+// Get HMAC Configuration
+func (s *server) GetHmacConfig() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		var hmacKey []byte
+		err := s.db.QueryRow(`SELECT hmac_key FROM users WHERE id = $1`, txtid).Scan(&hmacKey)
+
+		if err != nil {
+			if err == sql.ErrNoRows {
+				s.respondWithJSON(w, http.StatusOK, map[string]interface{}{
+					"hmac_key": "",
+				})
+				return
+			}
+
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to get HMAC configuration from database")
+			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"error": "failed to get HMAC configuration",
+			})
+			return
+		}
+
+		log.Debug().Str("userID", txtid).Bool("hasKey", len(hmacKey) > 0).Msg("Retrieved HMAC configuration from database")
+
+		response := map[string]interface{}{
+			"hmac_key": "",
+		}
+
+		if len(hmacKey) > 0 {
+			response["hmac_key"] = "***" // Mask HMAC key
+		}
+
+		s.respondWithJSON(w, http.StatusOK, response)
+	}
+}
+
+// Delete HMAC Configuration
+func (s *server) DeleteHmacConfig() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token") // ← Pegar o token
+
+		// Clear HMAC key
+		_, err := s.db.Exec(`UPDATE users SET hmac_key = NULL WHERE id = $1`, txtid)
+
+		if err != nil {
+			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"error": "failed to delete HMAC configuration",
+			})
+			return
+		}
+
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HasHmac", "false").(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HmacKeyEncrypted", "").(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated - HMAC configuration removed")
+		}
+
+		s.respondWithJSON(w, http.StatusOK, map[string]interface{}{
+			"Details": "HMAC configuration deleted successfully",
+		})
+  }
 }
 
 // RejectCall rejects an incoming call

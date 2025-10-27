@@ -1327,7 +1327,7 @@ log.Warn().Str("info", evt.Info.SourceString()).Msg("Undecryptable message recei
 	case *events.KeepAliveTimeout:
 		postmap["type"] = "KeepAliveTimeout"
 		dowebhook = 1
-		log.Info().Msg("Keep alive timeout")
+log.Warn().Msg("Keep alive timeout")
 	case *events.ClientOutdated:
 		postmap["type"] = "ClientOutdated"
 		dowebhook = 1

@@ -819,7 +819,7 @@ Indicates that one or more messages were read. Id is an array of messages Ids.
 The endpoint now supports two methods for chat identification to ensure backward compatibility:
 
 1. New Standard: Use ChatPhone and SenderPhone (recommended).
-1. Legacy: Use Chat and Sender (accepts full JID format).
+2. Legacy: Use Chat and Sender (accepts full JID format).
 
 ### Priority Logic
 

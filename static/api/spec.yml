@@ -1654,6 +1654,29 @@ paths:
                 example: { "code": 200, "data": { "Details": "Participants updated successfully" }, "success": true }
 
 definitions:
+  ContextInfo:
+    type: object
+    description: "Optional context info for replies"
+    properties:
+      StanzaId:
+        type: string
+        example: "3EB06F9067F80BAB89FF"
+        description: "Message ID to reply to"
+      Participant:
+        type: string
+        example: "5491155553935@s.whatsapp.net"
+        description: "JID of original message sender"
+      IsForwarded:
+        type: boolean
+        example: true
+        description: "Set to true to mark the message as forwarded. This is the preferred method for forwarding messages."
+      MentionedJID:
+        type: array
+        items:
+          type: string
+        example:
+          ["5491155553935@s.whatsapp.net", "5491155553936@s.whatsapp.net"]
+        description: "Array of JIDs to mention in the message. Use full WhatsApp JID format (number@s.whatsapp.net)."
   User:
     type: object
     properties:
@@ -1932,17 +1955,7 @@ definitions:
         type: string
         example: "BEGIN:VCARD\nVERSION:3.0\nN:Doe;John;;;\nFN:John Doe\nORG:Example.com Inc.;\nTITLE:Imaginary test person\nEMAIL;type=INTERNET;type=WORK;type=pref:johnDoe@example.org\nTEL;type=WORK;type=pref:+1 617 555 1212\nTEL;type=WORK:+1 (617) 555-1234\nTEL;type=CELL:+1 781 555 1212\nTEL;type=HOME:+1 202 555 1212\nitem1.ADR;type=WORK:;;2 Enterprise Avenue;Worktown;NY;01111;USA\nitem1.X-ABADR:us\nitem2.ADR;type=HOME;type=pref:;;3 Acacia Avenue;Hoitem2.X-ABADR:us\nEND:VCARD"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
 
 
   MessageLocation:
@@ -1968,17 +1981,7 @@ definitions:
         type: float
         example: 2.294481
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   ReactionText:
     type: object
     required: 
@@ -2102,17 +2105,7 @@ definitions:
         type: string
         example: "ABCDABCD1234"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
       QuotedText:
         type: string
         description: "Text content of the message being replied to (for displaying quote preview)"
@@ -2136,17 +2129,7 @@ definitions:
         type: string
         example: "ABCDABCD1234"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageAudio:
     type: object
     required: 
@@ -2163,17 +2146,7 @@ definitions:
         type: string
         example: "ABCDABCD1234"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageVideo:
     type: object
     required: 
@@ -2196,17 +2169,7 @@ definitions:
         type: string
         example: "AA00D010"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageSticker:
     type: object
     required: 
@@ -2226,17 +2189,7 @@ definitions:
         type: string
         example: "AA00D010"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
  
 
   MessageDocument:
@@ -2259,17 +2212,7 @@ definitions:
         type: string
         example: "ABCDABCD1234"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId:
-            type: string
-            example: "3EB06F9067F80BAB89FF"
-          Participant:
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageTemplate:
     type: object
     required: 

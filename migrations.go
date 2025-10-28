@@ -66,7 +66,7 @@ var migrations = []Migration{
 		UpSQL: addHmacKeySQL,
 	},
 	{
-		ID:    7,
+		ID:    8,
 		Name:  "add_data_json",
 		UpSQL: addDataJsonSQL,
 	},

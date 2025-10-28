@@ -65,6 +65,11 @@ var migrations = []Migration{
 		Name:  "add_hmac_key",
 		UpSQL: addHmacKeySQL,
 	},
+	{
+		ID:    7,
+		Name:  "add_data_json",
+		UpSQL: addDataJsonSQL,
+	},
 }
 
 const changeIDToStringSQL = `
@@ -192,6 +197,17 @@ BEGIN
     -- Add quoted_message_id column to message_history table if it doesn't exist
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'message_history' AND column_name = 'quoted_message_id') THEN
         ALTER TABLE message_history ADD COLUMN quoted_message_id TEXT;
+    END IF;
+END $$;
+`
+
+const addDataJsonSQL = `
+-- PostgreSQL version
+DO $$
+BEGIN
+    -- Add dataJson column to message_history table if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'message_history' AND column_name = 'datajson') THEN
+        ALTER TABLE message_history ADD COLUMN datajson TEXT;
     END IF;
 END $$;
 
@@ -409,6 +425,13 @@ func applyMigration(db *sqlx.DB, migration Migration) error {
 		if db.DriverName() == "sqlite" {
 			// Add hmac_key column as BLOB for encrypted data in SQLite
 			err = addColumnIfNotExistsSQLite(tx, "users", "hmac_key", "BLOB")
+		} else {
+			_, err = tx.Exec(migration.UpSQL)
+		}
+	} else if migration.ID == 8 {
+		if db.DriverName() == "sqlite" {
+			// Add dataJson column to message_history table for SQLite
+			err = addColumnIfNotExistsSQLite(tx, "message_history", "datajson", "TEXT")
 		} else {
 			_, err = tx.Exec(migration.UpSQL)
 		}

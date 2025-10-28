@@ -2273,10 +2273,10 @@ definitions:
       Id:
         type: object
         example: ["AABBCC11223344","DDEEFF55667788"]
-      Chat:
+      ChatPhone:
         type: string
         example: "5491155553934"
-      Sender:
+      SenderPhone:
         type: string
         example: "5491155553111"
   RejectCall:

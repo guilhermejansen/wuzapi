@@ -2332,10 +2332,10 @@ definitions:
         example: ["AABBCC11223344","DDEEFF55667788"]
       Chat:
         type: string
-        example: 5491155553934.0:1@s.whatsapp.net
+        example: "5491155553934"
       Sender:
         type: string
-        example: 5491155553111.0:1@s.whatsapp.net
+        example: "5491155553111"
   RejectCall:
     type: object
     required:

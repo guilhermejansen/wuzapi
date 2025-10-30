@@ -2066,6 +2066,12 @@ func (s *server) SendMessage() http.HandlerFunc {
 			defer cancel()
 
 			go func(ctx context.Context, u string) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Error().Interface("panic_info", r).Str("url", u).Msg("Panic recovered while fetching Open Graph data")
+						ogDataChan <- openGraphData{}
+					}
+				}()
 				t, d, i := fetchOpenGraphData(ctx, u)
 				ogDataChan <- openGraphData{title: t, description: d, imageData: i}
 			}(ctx, url)

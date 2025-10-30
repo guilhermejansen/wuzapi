@@ -372,7 +372,7 @@ func extractFirstURL(text string) string {
 }
 
 func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description string, imageData []byte) {
-	fetchWithContext := func(ctx context.Context, u string) ([]byte, string, error) {
+	fetchWithContext := func(ctx context.Context, u string, limit int64) ([]byte, string, error) {
 		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 		if err != nil {
 			return nil, "", err
@@ -388,7 +388,7 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 			return nil, "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
 		}
 
-		limitedBody := http.MaxBytesReader(nil, resp.Body, 10*1024*1024)
+		limitedBody := http.MaxBytesReader(nil, resp.Body, limit)
 		data, err := io.ReadAll(limitedBody)
 		if err != nil {
 			return nil, "", err
@@ -401,16 +401,16 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 		return data, contentType, nil
 	}
 
-	pageData, _, err := fetchWithContext(ctx, urlStr)
+	pageData, _, err := fetchWithContext(ctx, urlStr, 2*1024*1024)
 	if err != nil {
 		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to fetch URL for Open Graph data")
-		return title, description, imageData
+		return
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(pageData))
 	if err != nil {
 		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to parse HTML for Open Graph data")
-		return title, description, imageData
+		return
 	}
 
 	title = doc.Find(`meta[property="og:title"]`).AttrOr("content", "")
@@ -441,7 +441,7 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 	}
 
 	resolvedImageURL := pageURL.ResolveReference(imageURL).String()
-	imgBytes, _, err := fetchWithContext(ctx, resolvedImageURL)
+	imgBytes, _, err := fetchWithContext(ctx, resolvedImageURL, 10*1024*1024)
 	if err != nil {
 		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to fetch Open Graph image")
 		return
@@ -462,5 +462,5 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 
 	imageData = buf.Bytes()
 
-	return title, description, imageData
+	return
 }

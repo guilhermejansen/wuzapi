@@ -79,6 +79,10 @@ func newSafeHTTPClient() *http.Client {
 					return nil, fmt.Errorf("failed to resolve host '%s': %w", host, err)
 				}
 
+				if len(ips) == 0 {
+					return nil, fmt.Errorf("no IP addresses found for host: %s", host)
+				}
+
 				var lastErr error
 				for _, ip := range ips {
 					if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {

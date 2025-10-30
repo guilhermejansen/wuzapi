@@ -24,8 +24,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/patrickmn/go-cache"
 	"time"
+
+	"github.com/patrickmn/go-cache"
 
 	_ "golang.org/x/image/webp"
 
@@ -53,7 +54,7 @@ type UserSemaphoreManager struct {
 
 func NewUserSemaphoreManager() *UserSemaphoreManager {
 	return &UserSemaphoreManager{
-		pools: cache.New(cache.NoExpiration, 10*time.Minute),
+		pools: cache.New(30*time.Minute, 10*time.Minute),
 	}
 }
 

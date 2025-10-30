@@ -66,7 +66,7 @@ const version = "1.0.3"
 
 func newSafeHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 60 * time.Second,
+		Timeout: openGraphFetchTimeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
@@ -111,7 +111,10 @@ func init() {
 		"::1/128",        // IPv6 loopback
 		"fe80::/10",      // IPv6 link-local
 	} {
-		_, block, _ := net.ParseCIDR(cidr)
+		_, block, err := net.ParseCIDR(cidr)
+		if err != nil {
+			log.Fatal().Err(err).Msgf("Failed to parse CIDR string: %s", cidr)
+		}
 		privateIPBlocks = append(privateIPBlocks, block)
 	}
 

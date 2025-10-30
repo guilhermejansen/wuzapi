@@ -33,11 +33,12 @@ var urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
 
 const (
 	openGraphFetchTimeout    = 5 * time.Second
-	openGraphPageMaxBytes    = 2 * 1024 * 1024 // 2MB
+	openGraphPageMaxBytes    = 2 * 1024 * 1024  // 2MB
 	openGraphImageMaxBytes   = 10 * 1024 * 1024 // 10MB
 	openGraphThumbnailWidth  = 100
 	openGraphThumbnailHeight = 100
 	openGraphJpegQuality     = 80
+	openGraphMaxImageDim     = 4000 // Max width or height for Open Graph images
 )
 
 func Find(slice []string, val string) bool {
@@ -421,9 +422,6 @@ func extractFirstURL(text string) string {
 }
 
 func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description string, imageData []byte) {
-	ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
-	defer cancel()
-	
 
 	pageData, _, err := fetchURLBytes(ctx, urlStr, openGraphPageMaxBytes)
 	if err != nil {
@@ -468,6 +466,17 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 	imgBytes, _, err := fetchURLBytes(ctx, resolvedImageURL, openGraphImageMaxBytes)
 	if err != nil {
 		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to fetch Open Graph image")
+		return
+	}
+
+	imgConfig, _, err := image.DecodeConfig(bytes.NewReader(imgBytes))
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to decode Open Graph image config")
+		return
+	}
+
+	if imgConfig.Width > openGraphMaxImageDim || imgConfig.Height > openGraphMaxImageDim {
+		log.Warn().Int("width", imgConfig.Width).Int("height", imgConfig.Height).Str("imageURL", resolvedImageURL).Msg("Open Graph image dimensions too large")
 		return
 	}
 

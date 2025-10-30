@@ -116,11 +116,7 @@ func newSafeHTTPClient() *http.Client {
 					lastErr = err
 				}
 
-				if lastErr != nil {
-					return nil, lastErr
-				}
-
-				return nil, fmt.Errorf("could not establish a connection to %s", addr)
+				return nil, lastErr
 			},
 		},
 	}

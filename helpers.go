@@ -23,6 +23,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+
+	"github.com/patrickmn/go-cache"
 	"time"
 
 	_ "golang.org/x/image/webp"
@@ -46,12 +48,12 @@ const (
 
 type UserSemaphoreManager struct {
 	mu    sync.Mutex
-	pools map[string]chan struct{}
+	pools *cache.Cache
 }
 
 func NewUserSemaphoreManager() *UserSemaphoreManager {
 	return &UserSemaphoreManager{
-		pools: make(map[string]chan struct{}),
+		pools: cache.New(cache.NoExpiration, 10*time.Minute),
 	}
 }
 
@@ -59,11 +61,12 @@ func (usm *UserSemaphoreManager) ForUser(userID string) chan struct{} {
 	usm.mu.Lock()
 	defer usm.mu.Unlock()
 
-	pool, ok := usm.pools[userID]
-	if !ok {
-		pool = make(chan struct{}, openGraphUserFetchLimit) // Limit concurrent fetches per user
-		usm.pools[userID] = pool
+	if x, found := usm.pools.Get(userID); found {
+		return x.(chan struct{})
 	}
+
+	pool := make(chan struct{}, openGraphUserFetchLimit)
+	usm.pools.Set(userID, pool, cache.DefaultExpiration)
 	return pool
 }
 

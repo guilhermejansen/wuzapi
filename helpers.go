@@ -22,6 +22,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+var urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
+
 func Find(slice []string, val string) bool {
 	for _, item := range slice {
 		if item == val {
@@ -362,19 +364,20 @@ func decryptHMACKey(encryptedData []byte) (string, error) {
 }
 
 func extractFirstURL(text string) string {
-	re := regexp.MustCompile(`https?://[^\s"']+`)
-	match := re.FindString(text)
+	match := urlRegex.FindString(text)
 	return match
 }
 
 func fetchOpenGraphData(url string) (title, description string, imageData []byte) {
 	pageData, _, err := fetchURLBytes(url)
 	if err != nil {
+		log.Warn().Err(err).Str("url", url).Msg("Failed to fetch URL for Open Graph data")
 		return "", "", nil
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(pageData))
 	if err != nil {
+		log.Warn().Err(err).Str("url", url).Msg("Failed to parse HTML for Open Graph data")
 		return "", "", nil
 	}
 
@@ -391,7 +394,9 @@ func fetchOpenGraphData(url string) (title, description string, imageData []byte
 	imageURL := doc.Find(`meta[property="og:image"]`).AttrOr("content", "")
 	if imageURL != "" {
 		imgBytes, _, err := fetchURLBytes(imageURL)
-		if err == nil {
+		if err != nil {
+			log.Warn().Err(err).Str("imageURL", imageURL).Msg("Failed to fetch Open Graph image")
+		} else {
 			imageData = imgBytes
 		}
 	}

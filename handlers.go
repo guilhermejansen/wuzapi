@@ -2053,8 +2053,27 @@ func (s *server) SendMessage() http.HandlerFunc {
 
 		url := extractFirstURL(t.Body)
 		title, description, imageData := "", "", []byte{}
+
 		if url != "" {
-			title, description, imageData = fetchOpenGraphData(url)
+			ogDataChan := make(chan struct {
+				title       string
+				description string
+				imageData   []byte
+			}, 1)
+
+			go func(u string) {
+				t, d, i := fetchOpenGraphData(u)
+				ogDataChan <- struct {
+					title       string
+					description string
+					imageData   []byte
+				}{title: t, description: d, imageData: i}
+			}(url)
+
+			ogData := <-ogDataChan
+			title = ogData.title
+			description = ogData.description
+			imageData = ogData.imageData
 		}
 
 		msg := &waE2E.Message{

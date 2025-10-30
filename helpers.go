@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 var urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
 
 const (
+	maxFetchRequests         = 20
 	openGraphFetchTimeout    = 5 * time.Second
 	openGraphPageMaxBytes    = 2 * 1024 * 1024  // 2MB
 	openGraphImageMaxBytes   = 10 * 1024 * 1024 // 10MB
@@ -103,13 +105,18 @@ func getOpenGraphData(ctx context.Context, url string) (title, description strin
 	ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
 	defer cancel()
 
+	var openGraphFetchPool = make(chan struct{}, maxFetchRequests)
+
 	go func(u string) {
+		openGraphFetchPool <- struct{}{}
 		defer func() {
+			<-openGraphFetchPool
 			if r := recover(); r != nil {
-				log.Error().Interface("panic_info", r).Str("url", u).Msg("Panic recovered while fetching Open Graph data")
+				log.Error().Interface("panic_info", r).Str("url", u).Bytes("stack", debug.Stack()).Msg("Panic recovered while fetching Open Graph data")
 				ogDataChan <- openGraphData{}
 			}
 		}()
+
 		t, d, i := fetchOpenGraphData(ctx, u)
 		ogDataChan <- openGraphData{title: t, description: d, imageData: i}
 	}(url)

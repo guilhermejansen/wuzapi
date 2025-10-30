@@ -71,7 +71,9 @@ func newSafeHTTPClient() *http.Client {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err != nil {
-					// Handle cases where port is not specified, e.g., for default ports
+					if addrErr, ok := err.(*net.AddrError); !ok || !strings.Contains(addrErr.Err, "missing port") {
+						return nil, fmt.Errorf("invalid address '%s': %w", addr, err)
+					}
 					host = addr
 				}
 

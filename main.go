@@ -86,19 +86,13 @@ func newSafeHTTPClient() *http.Client {
 				var lastErr error
 				for _, ip := range ips {
 					isPrivateOrLocal := false
-					if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-						isPrivateOrLocal = true
-						if lastErr == nil {
-							lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to loopback/link-local address %s", ip)
-						}
-					} else {
+											if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+											isPrivateOrLocal = true
+											lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to loopback/link-local address %s", ip)					} else {
 						for _, block := range privateIPBlocks {
-							if block.Contains(ip) {
-								isPrivateOrLocal = true
-								if lastErr == nil {
-									lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to private ip address %s", ip)
-								}
-								break
+															if block.Contains(ip) {
+																isPrivateOrLocal = true
+																lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to private ip address %s", ip)								break
 							}
 						}
 					}

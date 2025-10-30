@@ -476,6 +476,12 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []b
 
 	imageURLStr := doc.Find(`meta[property="og:image"]`).AttrOr("content", "")
 	if imageURLStr == "" {
+		imageURLStr = doc.Find(`link[rel="apple-touch-icon"]`).AttrOr("href", "")
+	}
+	if imageURLStr == "" {
+		imageURLStr = doc.Find(`link[rel="icon"]`).AttrOr("href", "")
+	}
+	if imageURLStr == "" {
 		return title, description, nil
 	}
 

@@ -26,6 +26,8 @@ import (
 
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/patrickmn/go-cache"
 
 	_ "golang.org/x/image/webp"
@@ -72,8 +74,14 @@ func (usm *UserSemaphoreManager) ForUser(userID string) chan struct{} {
 }
 
 var (
-	urlRegex             = regexp.MustCompile(`https?://[^\s"']+`)
+	urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
+
 	userSemaphoreManager = NewUserSemaphoreManager()
+
+	openGraphGroup singleflight.Group
+
+	openGraphCache = cache.New(5*time.Minute, 10*time.Minute) // Cache Open Graph data for 5 minutes, cleanup every 10 minutes
+
 )
 
 func Find(slice []string, val string) bool {
@@ -95,7 +103,6 @@ func isHTTPURL(input string) bool {
 	}
 	return parsed.Host != ""
 }
-
 func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", resourceURL, nil)
 	if err != nil {
@@ -112,10 +119,13 @@ func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte
 		return nil, "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
-	limitedBody := http.MaxBytesReader(nil, resp.Body, limit)
-	data, err := io.ReadAll(limitedBody)
+	lr := io.LimitReader(resp.Body, limit+1)
+	data, err := io.ReadAll(lr)
 	if err != nil {
 		return nil, "", err
+	}
+	if int64(len(data)) > limit {
+		return nil, "", fmt.Errorf("response exceeds allowed size (%d bytes)", limit)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -126,32 +136,66 @@ func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte
 	return data, contentType, nil
 }
 
-func getOpenGraphData(ctx context.Context, url string, userID string) (title, description string, imageData []byte) {
-	ctx, cancel := context.WithTimeout(ctx, OpenGraphFetchTimeout)
-	defer cancel()
+func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title, description string, imageData []byte) {
+	// Check cache first
+	if cachedData, found := openGraphCache.Get(urlStr); found {
+		if data, ok := cachedData.(struct {
+			Title, Description string
+			ImageData          []byte
+		}); ok {
+			log.Debug().Str("url", urlStr).Msg("Open Graph data fetched from cache")
+			return data.Title, data.Description, data.ImageData
+		}
+	}
 
-	// Acquire a token from the semaphore pool, respecting the context's deadline.
-	userSemaphore := userSemaphoreManager.ForUser(userID)
-	select {
-	case userSemaphore <- struct{}{}:
-		defer func() { <-userSemaphore }() // Release the token when done.
-	case <-ctx.Done():
-		log.Warn().Str("url", url).Msg("Open Graph data fetch timed out while waiting for a worker")
+	v, err, _ := openGraphGroup.Do(urlStr, func() (interface{}, error) {
+		ctx, cancel := context.WithTimeout(ctx, OpenGraphFetchTimeout)
+		defer cancel()
+
+		// Acquire a token from the semaphore pool, respecting the context's deadline.
+		userPool := userSemaphoreManager.ForUser(userID)
+		select {
+		case userPool <- struct{}{}:
+			defer func() { <-userPool }() // Release the token when done.
+		case <-ctx.Done():
+			log.Warn().Str("url", urlStr).Msg("Open Graph data fetch timed out while waiting for a worker")
+			return nil, ctx.Err()
+		}
+
+		// Recover from panics during data fetching.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic_info", r).Str("url", urlStr).Bytes("stack", debug.Stack()).Msg("Panic recovered while fetching Open Graph data")
+				// Ensure returned values are zero-values on panic.
+				title, description, imageData = "", "", nil
+			}
+		}()
+
+		// Perform the fetch. The passed context will handle timeouts during HTTP requests.
+		title, description, imageData = fetchOpenGraphData(ctx, urlStr)
+
+		// Store in cache
+		openGraphCache.Set(urlStr, struct {
+			Title, Description string
+			ImageData          []byte
+		}{title, description, imageData}, cache.DefaultExpiration)
+
+		return struct {
+			Title, Description string
+			ImageData          []byte
+		}{title, description, imageData}, nil
+	})
+
+	if err != nil {
+		log.Error().Err(err).Str("url", urlStr).Msg("Error fetching Open Graph data via singleflight")
 		return "", "", nil
 	}
 
-	// Recover from panics during data fetching.
-	defer func() {
-		if r := recover(); r != nil {
-			log.Error().Interface("panic_info", r).Str("url", url).Bytes("stack", debug.Stack()).Msg("Panic recovered while fetching Open Graph data")
-			// Ensure returned values are zero-values on panic.
-			title, description, imageData = "", "", nil
-		}
-	}()
-
-	// Perform the fetch. The passed context will handle timeouts during HTTP requests.
-	title, description, imageData = fetchOpenGraphData(ctx, url)
-	return
+	data := v.(struct {
+		Title, Description string
+		ImageData          []byte
+	})
+	return data.Title, data.Description, data.ImageData
 }
 
 // Update entry in User map
@@ -325,10 +369,20 @@ func callHookFileWithHmac(myurl string, payload map[string]string, id string, fi
 }
 
 func (s *server) respondWithJSON(w http.ResponseWriter, statusCode int, payload interface{}) {
-	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
 		log.Error().Err(err).Msg("Failed to encode JSON response")
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(statusCode)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		log.Error().Err(err).Msg("Failed to write response body")
 	}
 }
 

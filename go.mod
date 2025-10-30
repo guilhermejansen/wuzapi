@@ -26,6 +26,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/vincent-petithory/dataurl v1.0.0
 	golang.org/x/image v0.32.0
+	golang.org/x/sync v0.17.0
 	modernc.org/sqlite v1.37.1
 )
 

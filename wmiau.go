@@ -59,6 +59,7 @@ func sendToGlobalWebHook(jsonData []byte, token string, userID string) {
 			"jsonData":     jsonDataStr,
 			"userID":       userID,
 			"instanceName": instance_name,
+			"userId": userID,
 		}
 		callHookWithHmac(*globalWebhook, globalData, userID, globalHMACKeyEncrypted)
 	}
@@ -78,6 +79,7 @@ func sendToUserWebHookWithHmac(webhookurl string, path string, jsonData []byte, 
 	data := map[string]string{
 		"jsonData":     string(jsonData),
 		"instanceName": instance_name,
+		"userId": userID,
 	}
 
 	log.Debug().Interface("webhookData", data).Msg("Data being sent to webhook")

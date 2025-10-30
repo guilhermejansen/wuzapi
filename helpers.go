@@ -372,13 +372,13 @@ func fetchOpenGraphData(url string) (title, description string, imageData []byte
 	pageData, _, err := fetchURLBytes(url)
 	if err != nil {
 		log.Warn().Err(err).Str("url", url).Msg("Failed to fetch URL for Open Graph data")
-		return "", "", nil
+		return title, description, imageData
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(pageData))
 	if err != nil {
 		log.Warn().Err(err).Str("url", url).Msg("Failed to parse HTML for Open Graph data")
-		return "", "", nil
+		return title, description, imageData
 	}
 
 	title = doc.Find(`meta[property="og:title"]`).AttrOr("content", "")
@@ -401,5 +401,5 @@ func fetchOpenGraphData(url string) (title, description string, imageData []byte
 		}
 	}
 
-	return
+	return title, description, imageData
 }

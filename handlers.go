@@ -1952,8 +1952,8 @@ func (s *server) SendMessage() http.HandlerFunc {
 		Phone       string
 		Body        string
 		Id          string
-        ContextInfo waE2E.ContextInfo
-        QuotedText  string `json:"QuotedText,omitempty"`
+		ContextInfo waE2E.ContextInfo
+		QuotedText  string `json:"QuotedText,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -2005,21 +2005,21 @@ func (s *server) SendMessage() http.HandlerFunc {
 			},
 		}
 
-        if t.ContextInfo.StanzaID != nil {
-            qm := &waE2E.Message{}
-            if t.QuotedText != "" {
-                qm.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
-                    Text: proto.String(t.QuotedText),
-                }
-            } else {
+		if t.ContextInfo.StanzaID != nil {
+			qm := &waE2E.Message{}
+			if t.QuotedText != "" {
+				qm.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
+					Text: proto.String(t.QuotedText),
+				}
+			} else {
 				qm.Conversation = proto.String("")
 			}
-            msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-                StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-                Participant:   proto.String(*t.ContextInfo.Participant),
-                QuotedMessage: qm,
-            }
-        }
+			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
+				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+				Participant:   proto.String(*t.ContextInfo.Participant),
+				QuotedMessage: qm,
+			}
+		}
 		if t.ContextInfo.MentionedJID != nil {
 			if msg.ExtendedTextMessage.ContextInfo == nil {
 				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
@@ -5097,7 +5097,7 @@ func (s *server) SetProxy() http.HandlerFunc {
 
 		// If enable is false, remove proxy configuration
 		if !t.Enable {
-			_, err = s.db.Exec("UPDATE users SET proxy_url = NULL WHERE id = $1", txtid)
+			_, err = s.db.Exec("UPDATE users SET proxy_url = '' WHERE id = $1", txtid)
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to remove proxy configuration"))
 				return
@@ -5747,7 +5747,7 @@ func (s *server) DeleteHmacConfig() http.HandlerFunc {
 		s.respondWithJSON(w, http.StatusOK, map[string]interface{}{
 			"Details": "HMAC configuration deleted successfully",
 		})
-  }
+	}
 }
 
 // RejectCall rejects an incoming call

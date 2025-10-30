@@ -4676,7 +4676,7 @@ func (s *server) EditUser() http.HandlerFunc {
 			if user.ProxyConfig.Enabled {
 				addField("proxy_url", user.ProxyConfig.ProxyURL, true)
 			} else {
-				addField("proxy_url", nil, true)
+				addField("proxy_url", "", true)
 			}
 		}
 

@@ -66,7 +66,7 @@ const version = "1.0.3"
 
 func newSafeHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: openGraphFetchTimeout,
+		Timeout: OpenGraphFetchTimeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)

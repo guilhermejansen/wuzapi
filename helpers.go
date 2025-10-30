@@ -421,7 +421,7 @@ func extractFirstURL(text string) string {
 		return ""
 	}
 
-	return strings.TrimRight(match, ".,!?)]}>\"'")
+	return strings.TrimRight(match, ".,!?")
 }
 func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []byte) {
 	pageData, _, err := fetchURLBytes(ctx, urlStr, openGraphPageMaxBytes)
@@ -438,7 +438,7 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []b
 
 	title := doc.Find(`meta[property="og:title"]`).AttrOr("content", "")
 	if title == "" {
-		title = doc.Find("title").Text()
+		title = strings.TrimSpace(doc.Find("title").Text())
 	}
 
 	description := doc.Find(`meta[property="og:description"]`).AttrOr("content", "")

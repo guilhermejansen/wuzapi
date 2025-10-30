@@ -94,7 +94,7 @@ func newSafeHTTPClient() *http.Client {
 				}
 
 				dialer := &net.Dialer{
-					Timeout:   30 * time.Second,
+					Timeout:   4 * time.Second,
 					KeepAlive: 30 * time.Second,
 				}
 				return dialer.DialContext(ctx, network, addr)

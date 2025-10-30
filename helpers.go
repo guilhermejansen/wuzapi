@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	_ "golang.org/x/image/webp"
+
 	"github.com/PuerkitoBio/goquery"
 	"github.com/jmoiron/sqlx"
 	"github.com/nfnt/resize"
@@ -33,14 +35,18 @@ import (
 var urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
 
 const (
-	maxFetchRequests         = 20
-	openGraphFetchTimeout    = 5 * time.Second
+	OpenGraphFetchTimeout    = 5 * time.Second
 	openGraphPageMaxBytes    = 2 * 1024 * 1024  // 2MB
 	openGraphImageMaxBytes   = 10 * 1024 * 1024 // 10MB
 	openGraphThumbnailWidth  = 100
 	openGraphThumbnailHeight = 100
 	openGraphJpegQuality     = 80
 	openGraphMaxImageDim     = 4000 // Max width or height for Open Graph images
+)
+
+var (
+	maxFetchRequests   = 20 // Limit concurrent Open Graph fetches
+	openGraphFetchPool = make(chan struct{}, maxFetchRequests)
 )
 
 func Find(slice []string, val string) bool {
@@ -94,40 +100,30 @@ func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte
 }
 
 func getOpenGraphData(ctx context.Context, url string) (title, description string, imageData []byte) {
-	type openGraphData struct {
-		title       string
-		description string
-		imageData   []byte
-	}
-
-	ogDataChan := make(chan openGraphData, 1)
-
-	ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
+	ctx, cancel := context.WithTimeout(ctx, OpenGraphFetchTimeout)
 	defer cancel()
 
-	var openGraphFetchPool = make(chan struct{}, maxFetchRequests)
-
-	go func(u string) {
-		openGraphFetchPool <- struct{}{}
-		defer func() {
-			<-openGraphFetchPool
-			if r := recover(); r != nil {
-				log.Error().Interface("panic_info", r).Str("url", u).Bytes("stack", debug.Stack()).Msg("Panic recovered while fetching Open Graph data")
-				ogDataChan <- openGraphData{}
-			}
-		}()
-
-		t, d, i := fetchOpenGraphData(ctx, u)
-		ogDataChan <- openGraphData{title: t, description: d, imageData: i}
-	}(url)
-
+	// Acquire a token from the semaphore pool, respecting the context's deadline.
 	select {
-	case ogData := <-ogDataChan:
-		return ogData.title, ogData.description, ogData.imageData
+	case openGraphFetchPool <- struct{}{}:
+		defer func() { <-openGraphFetchPool }() // Release the token when done.
 	case <-ctx.Done():
-		log.Warn().Str("url", url).Msg("Open Graph data fetch timed out")
+		log.Warn().Str("url", url).Msg("Open Graph data fetch timed out while waiting for a worker")
 		return "", "", nil
 	}
+
+	// Recover from panics during data fetching.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error().Interface("panic_info", r).Str("url", url).Bytes("stack", debug.Stack()).Msg("Panic recovered while fetching Open Graph data")
+			// Ensure returned values are zero-values on panic.
+			title, description, imageData = "", "", nil
+		}
+	}()
+
+	// Perform the fetch. The passed context will handle timeouts during HTTP requests.
+	title, description, imageData = fetchOpenGraphData(ctx, url)
+	return
 }
 
 // Update entry in User map

@@ -11,6 +11,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/url"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/jmoiron/sqlx"
+	"github.com/nfnt/resize"
 	"github.com/rs/zerolog/log"
 )
 
@@ -397,7 +400,19 @@ func fetchOpenGraphData(url string) (title, description string, imageData []byte
 		if err != nil {
 			log.Warn().Err(err).Str("imageURL", imageURL).Msg("Failed to fetch Open Graph image")
 		} else {
-			imageData = imgBytes
+			reader := bytes.NewReader(imgBytes)
+			img, _, err := image.Decode(reader)
+			if err != nil {
+				log.Warn().Err(err).Str("imageURL", imageURL).Msg("Failed to decode Open Graph image")
+			} else {
+				thumbnail := resize.Thumbnail(100, 100, img, resize.Lanczos3)
+				var buf bytes.Buffer
+				if err := jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: 80}); err != nil {
+					log.Warn().Err(err).Msg("Failed to encode thumbnail to JPEG")
+				} else {
+					imageData = buf.Bytes()
+				}
+			}
 		}
 	}
 

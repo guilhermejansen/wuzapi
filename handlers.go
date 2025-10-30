@@ -2055,25 +2055,26 @@ func (s *server) SendMessage() http.HandlerFunc {
 		title, description, imageData := "", "", []byte{}
 
 		if url != "" {
-			ogDataChan := make(chan struct {
+			type openGraphData struct {
 				title       string
 				description string
 				imageData   []byte
-			}, 1)
+			}
+			ogDataChan := make(chan openGraphData, 1)
 
 			go func(u string) {
 				t, d, i := fetchOpenGraphData(u)
-				ogDataChan <- struct {
-					title       string
-					description string
-					imageData   []byte
-				}{title: t, description: d, imageData: i}
+				ogDataChan <- openGraphData{title: t, description: d, imageData: i}
 			}(url)
 
-			ogData := <-ogDataChan
-			title = ogData.title
-			description = ogData.description
-			imageData = ogData.imageData
+			select {
+			case ogData := <-ogDataChan:
+				title = ogData.title
+				description = ogData.description
+				imageData = ogData.imageData
+			case <-time.After(5 * time.Second):
+				log.Warn().Str("url", url).Msg("Open Graph data fetch timed out")
+			}
 		}
 
 		msg := &waE2E.Message{

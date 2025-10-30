@@ -107,6 +107,7 @@ func init() {
 		"10.0.0.0/8",     // RFC1918
 		"172.16.0.0/12",  // RFC1918
 		"192.168.0.0/16", // RFC1918
+		"100.64.0.0/10",  // RFC6598 Carrier-Grade NAT
 		"169.254.0.0/16", // RFC3927 link-local
 		"::1/128",        // IPv6 loopback
 		"fe80::/10",      // IPv6 link-local

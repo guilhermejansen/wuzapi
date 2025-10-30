@@ -1122,7 +1122,7 @@ func (s *server) SendImage() http.HandlerFunc {
 				filedata = dataURL.Data
 			}
 		} else if isHTTPURL(t.Image) {
-			data, ct, err := fetchURLBytes(t.Image)
+			data, ct, err := fetchURLBytes(r.Context(), t.Image, openGraphImageMaxBytes)
 			if err != nil {
 				s.Respond(w, r, http.StatusBadRequest, errors.New(fmt.Sprintf("failed to fetch image from url: %v", err)))
 				return
@@ -1444,7 +1444,7 @@ func (s *server) SendVideo() http.HandlerFunc {
 
 			}
 		} else if isHTTPURL(t.Video) {
-			data, ct, err := fetchURLBytes(t.Video)
+			data, ct, err := fetchURLBytes(r.Context(), t.Video, openGraphImageMaxBytes)
 			if err != nil {
 				s.Respond(w, r, http.StatusBadRequest, errors.New(fmt.Sprintf("failed to fetch image from url: %v", err)))
 				return

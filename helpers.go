@@ -100,7 +100,7 @@ func getOpenGraphData(ctx context.Context, url string) (title, description strin
 
 	ogDataChan := make(chan openGraphData, 1)
 
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
 	defer cancel()
 
 	go func(u string) {
@@ -420,80 +420,85 @@ func extractFirstURL(text string) string {
 
 	return strings.TrimRight(match, ".,!?)]}>\"'")
 }
-
-func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description string, imageData []byte) {
-
+func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []byte) {
 	pageData, _, err := fetchURLBytes(ctx, urlStr, openGraphPageMaxBytes)
 	if err != nil {
 		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to fetch URL for Open Graph data")
-		return
+		return "", "", nil
 	}
 
 	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(pageData))
 	if err != nil {
 		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to parse HTML for Open Graph data")
-		return
+		return "", "", nil
 	}
 
-	title = doc.Find(`meta[property="og:title"]`).AttrOr("content", "")
+	title := doc.Find(`meta[property="og:title"]`).AttrOr("content", "")
 	if title == "" {
 		title = doc.Find("title").Text()
 	}
 
-	description = doc.Find(`meta[property="og:description"]`).AttrOr("content", "")
+	description := doc.Find(`meta[property="og:description"]`).AttrOr("content", "")
 	if description == "" {
 		description = doc.Find(`meta[name="description"]`).AttrOr("content", "")
 	}
 
 	imageURLStr := doc.Find(`meta[property="og:image"]`).AttrOr("content", "")
 	if imageURLStr == "" {
-		return
+		return title, description, nil
 	}
 
 	pageURL, err := url.Parse(urlStr)
 	if err != nil {
 		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to parse page URL for resolving image URL")
-		return
+		return title, description, nil
 	}
 
+	imageData := fetchOpenGraphImage(ctx, pageURL, imageURLStr)
+	return title, description, imageData
+}
+
+func fetchOpenGraphImage(ctx context.Context, pageURL *url.URL, imageURLStr string) []byte {
 	imageURL, err := url.Parse(imageURLStr)
 	if err != nil {
 		log.Warn().Err(err).Str("imageURL", imageURLStr).Msg("Failed to parse Open Graph image URL")
-		return
+		return nil
 	}
 
 	resolvedImageURL := pageURL.ResolveReference(imageURL).String()
 	imgBytes, _, err := fetchURLBytes(ctx, resolvedImageURL, openGraphImageMaxBytes)
 	if err != nil {
 		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to fetch Open Graph image")
-		return
+		return nil
 	}
 
 	imgConfig, _, err := image.DecodeConfig(bytes.NewReader(imgBytes))
 	if err != nil {
 		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to decode Open Graph image config")
-		return
+		return nil
 	}
 
 	if imgConfig.Width > openGraphMaxImageDim || imgConfig.Height > openGraphMaxImageDim {
-		log.Warn().Int("width", imgConfig.Width).Int("height", imgConfig.Height).Str("imageURL", resolvedImageURL).Msg("Open Graph image dimensions too large")
-		return
+		log.Warn().
+			Int("width", imgConfig.Width).
+			Int("height", imgConfig.Height).
+			Str("imageURL", resolvedImageURL).
+			Msg("Open Graph image dimensions too large")
+		return nil
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(imgBytes))
 	if err != nil {
 		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to decode Open Graph image")
-		return
+		return nil
 	}
 
 	thumbnail := resize.Thumbnail(openGraphThumbnailWidth, openGraphThumbnailHeight, img, resize.Lanczos3)
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: openGraphJpegQuality}); err != nil {
 		log.Warn().Err(err).Msg("Failed to encode thumbnail to JPEG")
-		return
+		return nil
 	}
 
-	imageData = buf.Bytes()
-
-	return
+	return buf.Bytes()
 }

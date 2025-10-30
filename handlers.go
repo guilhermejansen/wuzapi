@@ -2055,35 +2055,7 @@ func (s *server) SendMessage() http.HandlerFunc {
 		title, description, imageData := "", "", []byte{}
 
 		if url != "" {
-			type openGraphData struct {
-				title       string
-				description string
-				imageData   []byte
-			}
-			ogDataChan := make(chan openGraphData, 1)
-
-			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-			defer cancel()
-
-			go func(ctx context.Context, u string) {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Error().Interface("panic_info", r).Str("url", u).Msg("Panic recovered while fetching Open Graph data")
-						ogDataChan <- openGraphData{}
-					}
-				}()
-				t, d, i := fetchOpenGraphData(ctx, u)
-				ogDataChan <- openGraphData{title: t, description: d, imageData: i}
-			}(ctx, url)
-
-			select {
-			case ogData := <-ogDataChan:
-				title = ogData.title
-				description = ogData.description
-				imageData = ogData.imageData
-			case <-ctx.Done():
-				log.Warn().Str("url", url).Msg("Open Graph data fetch timed out")
-			}
+			title, description, imageData = getOpenGraphData(r.Context(), url)
 		}
 
 		msg := &waE2E.Message{

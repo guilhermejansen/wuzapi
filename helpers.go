@@ -12,12 +12,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	_ "image/gif"
 	"image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/jmoiron/sqlx"
@@ -75,6 +79,38 @@ func fetchURLBytes(resourceURL string) ([]byte, string, error) {
 	}
 
 	return data, contentType, nil
+}
+
+func getOpenGraphData(ctx context.Context, url string) (title, description string, imageData []byte) {
+	type openGraphData struct {
+		title       string
+		description string
+		imageData   []byte
+	}
+
+	ogDataChan := make(chan openGraphData, 1)
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	go func(u string) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error().Interface("panic_info", r).Str("url", u).Msg("Panic recovered while fetching Open Graph data")
+				ogDataChan <- openGraphData{}
+			}
+		}()
+		t, d, i := fetchOpenGraphData(ctx, u)
+		ogDataChan <- openGraphData{title: t, description: d, imageData: i}
+	}(url)
+
+	select {
+	case ogData := <-ogDataChan:
+		return ogData.title, ogData.description, ogData.imageData
+	case <-ctx.Done():
+		log.Warn().Str("url", url).Msg("Open Graph data fetch timed out")
+		return "", "", nil
+	}
 }
 
 // Update entry in User map
@@ -368,7 +404,11 @@ func decryptHMACKey(encryptedData []byte) (string, error) {
 
 func extractFirstURL(text string) string {
 	match := urlRegex.FindString(text)
-	return match
+	if match == "" {
+		return ""
+	}
+
+	return strings.TrimRight(match, ".,!?)]}>\"'")
 }
 
 func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description string, imageData []byte) {

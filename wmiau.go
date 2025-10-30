@@ -252,17 +252,17 @@ func (s *server) connectOnStartup() {
 
 			log.Info().Str("token", token).Msg("Connect to Whatsapp on startup")
 			v := Values{map[string]string{
-				"Id":            txtid,
-				"Name":          name,
-				"Jid":           jid,
-				"Webhook":       webhook,
-				"Token":         token,
-				"Proxy":         proxy_url,
-				"Events":        events,
-				"S3Enabled":     s3_enabled,
-				"MediaDelivery": media_delivery,
-				"History":       fmt.Sprintf("%d", history),
-				"HmacKeyEncrypted":       hmacKeyEncrypted,
+				"Id":               txtid,
+				"Name":             name,
+				"Jid":              jid,
+				"Webhook":          webhook,
+				"Token":            token,
+				"Proxy":            proxy_url,
+				"Events":           events,
+				"S3Enabled":        s3_enabled,
+				"MediaDelivery":    media_delivery,
+				"History":          fmt.Sprintf("%d", history),
+				"HmacKeyEncrypted": hmacKeyEncrypted,
 			}}
 			userinfocache.Set(token, v, cache.NoExpiration)
 			// Gets and set subscription to webhook events
@@ -1224,7 +1224,24 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 			// Only save if there's meaningful content (including delete messages)
 			if textContent != "" || mediaLink != "" || (messageType != "text" && messageType != "reaction") || messageType == "delete" {
-				err := mycli.s.saveMessageToHistory(mycli.userID, evt.Info.Chat.String(), evt.Info.Sender.String(), evt.Info.ID, messageType, textContent, mediaLink, replyToMessageID)
+				// Serializar evt para JSON
+				evtJSON, err := json.Marshal(evt)
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to marshal event to JSON")
+					evtJSON = []byte("{}")
+				}
+
+				err = mycli.s.saveMessageToHistory(
+					mycli.userID,
+					evt.Info.Chat.String(),
+					evt.Info.Sender.String(),
+					evt.Info.ID,
+					messageType,
+					textContent,
+					mediaLink,
+					replyToMessageID,
+					string(evtJSON),
+				)
 				if err != nil {
 					log.Error().Err(err).Msg("Failed to save message to history")
 				} else {
@@ -1329,7 +1346,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.UndecryptableMessage:
 		postmap["type"] = "UndecryptableMessage"
 		dowebhook = 1
-log.Warn().Str("info", evt.Info.SourceString()).Msg("Undecryptable message received")
+		log.Warn().Str("info", evt.Info.SourceString()).Msg("Undecryptable message received")
 	case *events.MediaRetry:
 		postmap["type"] = "MediaRetry"
 		dowebhook = 1
@@ -1361,11 +1378,11 @@ log.Warn().Str("info", evt.Info.SourceString()).Msg("Undecryptable message recei
 	case *events.KeepAliveTimeout:
 		postmap["type"] = "KeepAliveTimeout"
 		dowebhook = 1
-log.Warn().Msg("Keep alive timeout")
+		log.Warn().Msg("Keep alive timeout")
 	case *events.ClientOutdated:
 		postmap["type"] = "ClientOutdated"
 		dowebhook = 1
-log.Warn().Msg("Client outdated")
+		log.Warn().Msg("Client outdated")
 	case *events.TemporaryBan:
 		postmap["type"] = "TemporaryBan"
 		dowebhook = 1

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -14,7 +15,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/zerolog/log"
 )
@@ -356,4 +359,42 @@ func decryptHMACKey(encryptedData []byte) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+func extractFirstURL(text string) string {
+	re := regexp.MustCompile(`https?://[^\s"']+`)
+	match := re.FindString(text)
+	return match
+}
+
+func fetchOpenGraphData(url string) (title, description string, imageData []byte) {
+	pageData, _, err := fetchURLBytes(url)
+	if err != nil {
+		return "", "", nil
+	}
+
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(pageData))
+	if err != nil {
+		return "", "", nil
+	}
+
+	title = doc.Find(`meta[property="og:title"]`).AttrOr("content", "")
+	if title == "" {
+		title = doc.Find("title").Text()
+	}
+
+	description = doc.Find(`meta[property="og:description"]`).AttrOr("content", "")
+	if description == "" {
+		description = doc.Find(`meta[name="description"]`).AttrOr("content", "")
+	}
+
+	imageURL := doc.Find(`meta[property="og:image"]`).AttrOr("content", "")
+	if imageURL != "" {
+		imgBytes, _, err := fetchURLBytes(imageURL)
+		if err == nil {
+			imageData = imgBytes
+		}
+	}
+
+	return
 }

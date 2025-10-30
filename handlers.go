@@ -2051,9 +2051,19 @@ func (s *server) SendMessage() http.HandlerFunc {
 			msgid = t.Id
 		}
 
+		url := extractFirstURL(t.Body)
+		title, description, imageData := "", "", []byte{}
+		if url != "" {
+			title, description, imageData = fetchOpenGraphData(url)
+		}
+
 		msg := &waE2E.Message{
 			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text: &t.Body,
+				Text:          proto.String(t.Body),
+				MatchedText:   proto.String(url),
+				Title:         proto.String(title),
+				Description:   proto.String(description),
+				JPEGThumbnail: imageData,
 			},
 		}
 

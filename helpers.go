@@ -83,7 +83,7 @@ func callHook(myurl string, payload map[string]string, userID string) {
 
 // webhook for regular messages with HMAC
 func callHookWithHmac(myurl string, payload map[string]string, userID string, encryptedHmacKey []byte) {
-	log.Info().Str("url", myurl).Msg("Sending POST to client " + userID)
+	log.Info().Str("url", myurl).Str("userID", userID).Msg("Sending POST to client")
 
 	// Log the payload map
 	log.Debug().Msg("Payload:")

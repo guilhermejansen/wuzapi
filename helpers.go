@@ -31,6 +31,15 @@ import (
 
 var urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
 
+const (
+	openGraphFetchTimeout    = 5 * time.Second
+	openGraphPageMaxBytes    = 2 * 1024 * 1024 // 2MB
+	openGraphImageMaxBytes   = 10 * 1024 * 1024 // 10MB
+	openGraphThumbnailWidth  = 100
+	openGraphThumbnailHeight = 100
+	openGraphJpegQuality     = 80
+)
+
 func Find(slice []string, val string) bool {
 	for _, item := range slice {
 		if item == val {
@@ -51,8 +60,8 @@ func isHTTPURL(input string) bool {
 	return parsed.Host != ""
 }
 
-func fetchURLBytes(resourceURL string) ([]byte, string, error) {
-	req, err := http.NewRequest("GET", resourceURL, nil)
+func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", resourceURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -67,7 +76,7 @@ func fetchURLBytes(resourceURL string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
-	limitedBody := http.MaxBytesReader(nil, resp.Body, 10*1024*1024)
+	limitedBody := http.MaxBytesReader(nil, resp.Body, limit)
 	data, err := io.ReadAll(limitedBody)
 	if err != nil {
 		return nil, "", err
@@ -412,36 +421,11 @@ func extractFirstURL(text string) string {
 }
 
 func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description string, imageData []byte) {
-	fetchWithContext := func(ctx context.Context, u string, limit int64) ([]byte, string, error) {
-		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-		if err != nil {
-			return nil, "", err
-		}
+	ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
+	defer cancel()
+	
 
-		resp, err := globalHTTPClient.Do(req)
-		if err != nil {
-			return nil, "", err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
-		}
-
-		limitedBody := http.MaxBytesReader(nil, resp.Body, limit)
-		data, err := io.ReadAll(limitedBody)
-		if err != nil {
-			return nil, "", err
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		if contentType == "" {
-			contentType = http.DetectContentType(data)
-		}
-		return data, contentType, nil
-	}
-
-	pageData, _, err := fetchWithContext(ctx, urlStr, 2*1024*1024)
+	pageData, _, err := fetchURLBytes(ctx, urlStr, openGraphPageMaxBytes)
 	if err != nil {
 		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to fetch URL for Open Graph data")
 		return
@@ -481,7 +465,7 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 	}
 
 	resolvedImageURL := pageURL.ResolveReference(imageURL).String()
-	imgBytes, _, err := fetchWithContext(ctx, resolvedImageURL, 10*1024*1024)
+	imgBytes, _, err := fetchURLBytes(ctx, resolvedImageURL, openGraphImageMaxBytes)
 	if err != nil {
 		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to fetch Open Graph image")
 		return
@@ -493,9 +477,9 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 		return
 	}
 
-	thumbnail := resize.Thumbnail(100, 100, img, resize.Lanczos3)
+	thumbnail := resize.Thumbnail(openGraphThumbnailWidth, openGraphThumbnailHeight, img, resize.Lanczos3)
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: 80}); err != nil {
+	if err := jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: openGraphJpegQuality}); err != nil {
 		log.Warn().Err(err).Msg("Failed to encode thumbnail to JPEG")
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,12 +57,64 @@ var (
 	killchannel      = make(map[string](chan bool))
 	userinfocache    = cache.New(5*time.Minute, 10*time.Minute)
 	lastMessageCache = cache.New(24*time.Hour, 24*time.Hour)
-	globalHTTPClient = &http.Client{Timeout: 60 * time.Second}
+	globalHTTPClient = newSafeHTTPClient()
 )
+
+var privateIPBlocks []*net.IPNet
 
 const version = "1.0.3"
 
+func newSafeHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 60 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					// Handle cases where port is not specified, e.g., for default ports
+					host = addr
+				}
+
+				ips, err := net.LookupIP(host)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve host: %w", err)
+				}
+
+				for _, ip := range ips {
+					if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+						return nil, fmt.Errorf("ssrf attempt detected: refused to connect to loopback/link-local address %s", ip)
+					}
+					for _, block := range privateIPBlocks {
+						if block.Contains(ip) {
+							return nil, fmt.Errorf("ssrf attempt detected: refused to connect to private ip address %s", ip)
+						}
+					}
+				}
+
+				dialer := &net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+		},
+	}
+}
+
 func init() {
+	for _, cidr := range []string{
+		"127.0.0.0/8",    // IPv4 loopback
+		"10.0.0.0/8",     // RFC1918
+		"172.16.0.0/12",  // RFC1918
+		"192.168.0.0/16", // RFC1918
+		"169.254.0.0/16", // RFC3927 link-local
+		"::1/128",        // IPv6 loopback
+		"fe80::/10",      // IPv6 link-local
+	} {
+		_, block, _ := net.ParseCIDR(cidr)
+		privateIPBlocks = append(privateIPBlocks, block)
+	}
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Warn().Err(err).Msg("It was not possible to load the .env file (it may not exist).")

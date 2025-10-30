@@ -69,35 +69,58 @@ func newSafeHTTPClient() *http.Client {
 		Timeout: OpenGraphFetchTimeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, _, err := net.SplitHostPort(addr)
+				host, port, err := net.SplitHostPort(addr)
 				if err != nil {
-					if addrErr, ok := err.(*net.AddrError); !ok || !strings.Contains(addrErr.Err, "missing port") {
-						return nil, fmt.Errorf("invalid address '%s': %w", addr, err)
-					}
 					host = addr
 				}
 
 				ips, err := net.LookupIP(host)
 				if err != nil {
-					return nil, fmt.Errorf("failed to resolve host: %w", err)
+					return nil, fmt.Errorf("failed to resolve host '%s': %w", host, err)
 				}
 
+				var lastErr error
 				for _, ip := range ips {
 					if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-						return nil, fmt.Errorf("ssrf attempt detected: refused to connect to loopback/link-local address %s", ip)
+						lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to loopback/link-local address %s", ip)
+						continue
 					}
+					isPrivate := false
 					for _, block := range privateIPBlocks {
 						if block.Contains(ip) {
-							return nil, fmt.Errorf("ssrf attempt detected: refused to connect to private ip address %s", ip)
+							lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to private ip address %s", ip)
+							isPrivate = true
+							break
 						}
 					}
+					if isPrivate {
+						continue
+					}
+
+					dialer := &net.Dialer{
+						Timeout:   4 * time.Second,
+						KeepAlive: 30 * time.Second,
+					}
+
+					var connAddr string
+					if port != "" {
+						connAddr = net.JoinHostPort(ip.String(), port)
+					} else {
+						connAddr = ip.String()
+					}
+
+					conn, err := dialer.DialContext(ctx, network, connAddr)
+					if err == nil {
+						return conn, nil
+					}
+					lastErr = err
 				}
 
-				dialer := &net.Dialer{
-					Timeout:   4 * time.Second,
-					KeepAlive: 30 * time.Second,
+				if lastErr != nil {
+					return nil, lastErr
 				}
-				return dialer.DialContext(ctx, network, addr)
+
+				return nil, fmt.Errorf("could not establish a connection to %s", addr)
 			},
 		},
 	}

@@ -2055,7 +2055,8 @@ func (s *server) SendMessage() http.HandlerFunc {
 		title, description, imageData := "", "", []byte{}
 
 		if url != "" {
-			title, description, imageData = getOpenGraphData(r.Context(), url)
+				txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		title, description, imageData = getOpenGraphData(r.Context(), url, txtid)
 		}
 
 		msg := &waE2E.Message{

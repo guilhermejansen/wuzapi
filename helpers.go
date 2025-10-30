@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	_ "golang.org/x/image/webp"
@@ -32,8 +33,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-var urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
-
 const (
 	OpenGraphFetchTimeout    = 5 * time.Second
 	openGraphPageMaxBytes    = 2 * 1024 * 1024  // 2MB
@@ -42,11 +41,35 @@ const (
 	openGraphThumbnailHeight = 100
 	openGraphJpegQuality     = 80
 	openGraphMaxImageDim     = 4000 // Max width or height for Open Graph images
+	openGraphUserFetchLimit  = 20   // Limit concurrent Open Graph fetches per user
 )
 
+type UserSemaphoreManager struct {
+	mu    sync.Mutex
+	pools map[string]chan struct{}
+}
+
+func NewUserSemaphoreManager() *UserSemaphoreManager {
+	return &UserSemaphoreManager{
+		pools: make(map[string]chan struct{}),
+	}
+}
+
+func (usm *UserSemaphoreManager) ForUser(userID string) chan struct{} {
+	usm.mu.Lock()
+	defer usm.mu.Unlock()
+
+	pool, ok := usm.pools[userID]
+	if !ok {
+		pool = make(chan struct{}, openGraphUserFetchLimit) // Limit concurrent fetches per user
+		usm.pools[userID] = pool
+	}
+	return pool
+}
+
 var (
-	maxFetchRequests   = 20 // Limit concurrent Open Graph fetches
-	openGraphFetchPool = make(chan struct{}, maxFetchRequests)
+	urlRegex             = regexp.MustCompile(`https?://[^\s"']+`)
+	userSemaphoreManager = NewUserSemaphoreManager()
 )
 
 func Find(slice []string, val string) bool {
@@ -99,14 +122,15 @@ func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte
 	return data, contentType, nil
 }
 
-func getOpenGraphData(ctx context.Context, url string) (title, description string, imageData []byte) {
+func getOpenGraphData(ctx context.Context, url string, userID string) (title, description string, imageData []byte) {
 	ctx, cancel := context.WithTimeout(ctx, OpenGraphFetchTimeout)
 	defer cancel()
 
 	// Acquire a token from the semaphore pool, respecting the context's deadline.
+	userSemaphore := userSemaphoreManager.ForUser(userID)
 	select {
-	case openGraphFetchPool <- struct{}{}:
-		defer func() { <-openGraphFetchPool }() // Release the token when done.
+	case userSemaphore <- struct{}{}:
+		defer func() { <-userSemaphore }() // Release the token when done.
 	case <-ctx.Done():
 		log.Warn().Str("url", url).Msg("Open Graph data fetch timed out while waiting for a worker")
 		return "", "", nil
@@ -421,7 +445,7 @@ func extractFirstURL(text string) string {
 		return ""
 	}
 
-	return strings.TrimRight(match, ".,!?")
+	return strings.TrimRight(match, ".,!?()[]{}")
 }
 func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []byte) {
 	pageData, _, err := fetchURLBytes(ctx, urlStr, openGraphPageMaxBytes)

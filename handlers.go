@@ -2062,17 +2062,20 @@ func (s *server) SendMessage() http.HandlerFunc {
 			}
 			ogDataChan := make(chan openGraphData, 1)
 
-			go func(u string) {
-				t, d, i := fetchOpenGraphData(u)
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			defer cancel()
+
+			go func(ctx context.Context, u string) {
+				t, d, i := fetchOpenGraphData(ctx, u)
 				ogDataChan <- openGraphData{title: t, description: d, imageData: i}
-			}(url)
+			}(ctx, url)
 
 			select {
 			case ogData := <-ogDataChan:
 				title = ogData.title
 				description = ogData.description
 				imageData = ogData.imageData
-			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
 				log.Warn().Str("url", url).Msg("Open Graph data fetch timed out")
 			}
 		}

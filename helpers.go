@@ -378,8 +378,7 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 			return nil, "", err
 		}
 
-		client := &http.Client{}
-		resp, err := client.Do(req)
+		resp, err := globalHTTPClient.Do(req)
 		if err != nil {
 			return nil, "", err
 		}
@@ -425,37 +424,43 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (title, description 
 	}
 
 	imageURLStr := doc.Find(`meta[property="og:image"]`).AttrOr("content", "")
-	if imageURLStr != "" {
-		pageURL, err := url.Parse(urlStr)
-		if err != nil {
-			log.Warn().Err(err).Str("url", urlStr).Msg("Failed to parse page URL for resolving image URL")
-		} else {
-			imageURL, err := url.Parse(imageURLStr)
-			if err != nil {
-				log.Warn().Err(err).Str("imageURL", imageURLStr).Msg("Failed to parse Open Graph image URL")
-			} else {
-				resolvedImageURL := pageURL.ResolveReference(imageURL).String()
-				imgBytes, _, err := fetchWithContext(ctx, resolvedImageURL)
-				if err != nil {
-					log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to fetch Open Graph image")
-				} else {
-					reader := bytes.NewReader(imgBytes)
-					img, _, err := image.Decode(reader)
-					if err != nil {
-						log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to decode Open Graph image")
-					} else {
-						thumbnail := resize.Thumbnail(100, 100, img, resize.Lanczos3)
-						var buf bytes.Buffer
-						if err := jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: 80}); err != nil {
-							log.Warn().Err(err).Msg("Failed to encode thumbnail to JPEG")
-						} else {
-							imageData = buf.Bytes()
-						}
-					}
-				}
-			}
-		}
+	if imageURLStr == "" {
+		return
 	}
+
+	pageURL, err := url.Parse(urlStr)
+	if err != nil {
+		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to parse page URL for resolving image URL")
+		return
+	}
+
+	imageURL, err := url.Parse(imageURLStr)
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", imageURLStr).Msg("Failed to parse Open Graph image URL")
+		return
+	}
+
+	resolvedImageURL := pageURL.ResolveReference(imageURL).String()
+	imgBytes, _, err := fetchWithContext(ctx, resolvedImageURL)
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to fetch Open Graph image")
+		return
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(imgBytes))
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to decode Open Graph image")
+		return
+	}
+
+	thumbnail := resize.Thumbnail(100, 100, img, resize.Lanczos3)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: 80}); err != nil {
+		log.Warn().Err(err).Msg("Failed to encode thumbnail to JPEG")
+		return
+	}
+
+	imageData = buf.Bytes()
 
 	return title, description, imageData
 }

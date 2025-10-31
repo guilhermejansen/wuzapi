@@ -4833,7 +4833,7 @@ func (s *server) EditUser() http.HandlerFunc {
 			if user.ProxyConfig.Enabled {
 				addField("proxy_url", user.ProxyConfig.ProxyURL, true)
 			} else {
-				addField("proxy_url", nil, true)
+				addField("proxy_url", "", true)
 			}
 		}
 
@@ -5254,7 +5254,7 @@ func (s *server) SetProxy() http.HandlerFunc {
 
 		// If enable is false, remove proxy configuration
 		if !t.Enable {
-			_, err = s.db.Exec("UPDATE users SET proxy_url = NULL WHERE id = $1", txtid)
+			_, err = s.db.Exec("UPDATE users SET proxy_url = '' WHERE id = $1", txtid)
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to remove proxy configuration"))
 				return

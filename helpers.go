@@ -149,29 +149,37 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 	}
 
 	v, err, _ := openGraphGroup.Do(urlStr, func() (interface{}, error) {
+		var (
+			title, description string
+			imageData          []byte
+		)
+
 		ctx, cancel := context.WithTimeout(ctx, OpenGraphFetchTimeout)
 		defer cancel()
 
-		// Acquire a token from the semaphore pool, respecting the context's deadline.
+		// Acquire a token from the semaphore pool
 		userPool := userSemaphoreManager.ForUser(userID)
 		select {
 		case userPool <- struct{}{}:
-			defer func() { <-userPool }() // Release the token when done.
+			defer func() { <-userPool }()
 		case <-ctx.Done():
 			log.Warn().Str("url", urlStr).Msg("Open Graph data fetch timed out while waiting for a worker")
 			return nil, ctx.Err()
 		}
 
-		// Recover from panics during data fetching.
+		// Recover from panics inside this function
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error().Interface("panic_info", r).Str("url", urlStr).Bytes("stack", debug.Stack()).Msg("Panic recovered while fetching Open Graph data")
-				// Ensure returned values are zero-values on panic.
+				log.Error().
+					Interface("panic_info", r).
+					Str("url", urlStr).
+					Bytes("stack", debug.Stack()).
+					Msg("Panic recovered while fetching Open Graph data")
 				title, description, imageData = "", "", nil
 			}
 		}()
 
-		// Perform the fetch. The passed context will handle timeouts during HTTP requests.
+		// Fetch data
 		title, description, imageData = fetchOpenGraphData(ctx, urlStr)
 
 		// Store in cache
@@ -188,6 +196,10 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 
 	if err != nil {
 		log.Error().Err(err).Str("url", urlStr).Msg("Error fetching Open Graph data via singleflight")
+		return "", "", nil
+	}
+
+	if v == nil {
 		return "", "", nil
 	}
 

@@ -2003,6 +2003,7 @@ func (s *server) SendMessage() http.HandlerFunc {
 	type textStruct struct {
 		Phone       string
 		Body        string
+		LinkPreview bool
 		Id          string
 		ContextInfo waE2E.ContextInfo
 		QuotedText  string `json:"QuotedText,omitempty"`
@@ -2051,11 +2052,18 @@ func (s *server) SendMessage() http.HandlerFunc {
 			msgid = t.Id
 		}
 
-		url := extractFirstURL(t.Body)
-		title, description, imageData := "", "", []byte{}
+		var (
+			url         string
+			title       string
+			description string
+			imageData   []byte
+		)
 
-		if url != "" {
-			title, description, imageData = getOpenGraphData(r.Context(), url, txtid)
+		if t.LinkPreview {
+			url = extractFirstURL(t.Body)
+			if url != "" {
+				title, description, imageData = getOpenGraphData(r.Context(), url, txtid)
+			}
 		}
 
 		msg := &waE2E.Message{

@@ -826,7 +826,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Id\": [\"AABBCC11223344\"],\n  \"Chat\": \"5491155553934.0:1@s.whatsapp.net\"\n}"
+              "raw": "{\n  \"Id\": [\"AABBCC11223344\"],\n  \"ChatPhone\": \"5491155553934\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/chat/markread",

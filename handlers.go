@@ -3345,9 +3345,11 @@ func (s *server) React() http.HandlerFunc {
 func (s *server) MarkRead() http.HandlerFunc {
 
 	type markReadStruct struct {
-		Id     []string
-		Chat   types.JID
-		Sender types.JID
+		Id          []string
+		Chat        types.JID // Legacy: Kept for backward compatibility
+		Sender      types.JID // Legacy: Kept for backward compatibility
+		ChatPhone   string    // New standardized field (prioritized)
+		SenderPhone string    // New standardized field (prioritized)
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -3367,9 +3369,33 @@ func (s *server) MarkRead() http.HandlerFunc {
 			return
 		}
 
-		if t.Chat.String() == "" {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Chat in Payload"))
+		var jidChat types.JID
+
+		if len(t.ChatPhone) > 0 {
+			var ok bool
+			jidChat, ok = parseJID(t.ChatPhone)
+			if !ok {
+				s.Respond(w, r, http.StatusBadRequest, errors.New("could not parse ChatPhone"))
+				return
+			}
+		} else if t.Chat.String() != "" {
+			jidChat = t.Chat
+		} else {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing ChatPhone in Payload"))
 			return
+		}
+
+		var jidSender types.JID
+
+		if len(t.SenderPhone) > 0 {
+			var ok bool
+			jidSender, ok = parseJID(t.SenderPhone)
+			if !ok {
+				s.Respond(w, r, http.StatusBadRequest, errors.New("could not parse SenderPhone"))
+				return
+			}
+		} else if t.Sender.String() != "" {
+			jidSender = t.Sender
 		}
 
 		if len(t.Id) < 1 {
@@ -3377,7 +3403,7 @@ func (s *server) MarkRead() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).MarkRead(t.Id, time.Now(), t.Chat, t.Sender)
+		err = clientManager.GetWhatsmeowClient(txtid).MarkRead(t.Id, time.Now(), jidChat, jidSender)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failure marking messages as read"))
 			return

@@ -821,16 +821,22 @@ curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"
 
 ## Mark message(s) as read
 
-Indicates that one or more messages were read. Id is an array of messages Ids. 
-Chat must always be set to the chat ID (user ID in DMs and group ID in group chats).
-Sender must be set in group chats and must be the user ID who sent the message.
+Indicates that one or more messages were read. Id is an array of messages Ids.
+The endpoint now supports two methods for chat identification to ensure backward compatibility:
+
+1. New Standard: Use ChatPhone and SenderPhone (recommended).
+2. Legacy: Use Chat and Sender (accepts full JID format).
+
+### Priority Logic
+
+The API processes the IDs using the following priority: `ChatPhone` > `Chat` (and `SenderPhone` > `Sender`).
 
 endpoint: _/chat/markread_
 
 method: **POST**
 
 ```
-curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Id":["AABBCCDD112233","IIOOPPLL43332"]","Chat":"5491155553934.0:1@s.whatsapp.net"}' http://localhost:8080/chat/markread
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Id":["AABBCCDD112233", "IIOOPPLL43332"], "ChatPhone":"5491155553934", "SenderPhone":"5491155553935"}' http://localhost:8080/chat/markread
 ```
 
 ---

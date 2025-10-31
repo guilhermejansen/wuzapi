@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,12 +57,105 @@ var (
 	killchannel      = make(map[string](chan bool))
 	userinfocache    = cache.New(5*time.Minute, 10*time.Minute)
 	lastMessageCache = cache.New(24*time.Hour, 24*time.Hour)
-	globalHTTPClient = &http.Client{Timeout: 60 * time.Second}
+	globalHTTPClient = newSafeHTTPClient()
 )
+
+var privateIPBlocks []*net.IPNet
 
 const version = "1.0.3"
 
+func newSafeHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 60 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, fmt.Errorf("unexpected address format from http transport: %q: %w", addr, err)
+				}
+
+				ips, err := net.LookupIP(host)
+				if err != nil {
+					return nil, fmt.Errorf("failed to resolve host '%s': %w", host, err)
+				}
+				if len(ips) == 0 {
+					return nil, fmt.Errorf("no IP addresses found for host: %s", host)
+				}
+
+				var (
+					lastDialErr   error
+					ssrfDetected  bool
+					ssrfLastError error
+				)
+
+				for _, ip := range ips {
+					if isPrivateOrLoopback(ip) {
+						log.Warn().Str("ip", ip.String()).Str("host", host).Msg("SSRF attempt detected: refused to connect to private or local address")
+						ssrfDetected = true
+						if ssrfLastError == nil {
+							ssrfLastError = fmt.Errorf("ssrf attempt detected: host '%s' resolves to one or more private IP addresses", host)
+						}
+						continue
+					}
+
+					dialer := &net.Dialer{
+						Timeout:   4 * time.Second,
+						KeepAlive: 30 * time.Second,
+					}
+
+					connAddr := net.JoinHostPort(ip.String(), port)
+					conn, err := dialer.DialContext(ctx, network, connAddr)
+					if err == nil {
+						return conn, nil
+					}
+					lastDialErr = err
+				}
+
+				if lastDialErr != nil {
+					return nil, lastDialErr
+				}
+				if ssrfDetected {
+					return nil, ssrfLastError
+				}
+				if lastDialErr != nil {
+					return nil, lastDialErr
+				}
+				return nil, fmt.Errorf("no dialable IP addresses found for host %s", host)
+			},
+		},
+	}
+}
+
+func isPrivateOrLoopback(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	for _, block := range privateIPBlocks {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
+	for _, cidr := range []string{
+		"127.0.0.0/8",    // IPv4 loopback
+		"10.0.0.0/8",     // RFC1918
+		"172.16.0.0/12",  // RFC1918
+		"192.168.0.0/16", // RFC1918
+		"100.64.0.0/10",  // RFC6598 Carrier-Grade NAT
+		"169.254.0.0/16", // RFC3927 link-local
+		"::1/128",        // IPv6 loopback
+		"fe80::/10",      // IPv6 link-local
+	} {
+		_, block, err := net.ParseCIDR(cidr)
+		if err != nil {
+			log.Fatal().Err(err).Msgf("Failed to parse CIDR string: %s", cidr)
+		}
+		privateIPBlocks = append(privateIPBlocks, block)
+	}
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Warn().Err(err).Msg("It was not possible to load the .env file (it may not exist).")

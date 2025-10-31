@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -10,13 +11,73 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"runtime/debug"
+	"strings"
+	"sync"
 
+	"time"
+
+	"golang.org/x/sync/singleflight"
+
+	"github.com/patrickmn/go-cache"
+
+	_ "golang.org/x/image/webp"
+
+	"github.com/PuerkitoBio/goquery"
 	"github.com/jmoiron/sqlx"
+	"github.com/nfnt/resize"
 	"github.com/rs/zerolog/log"
+)
+
+const (
+	openGraphFetchTimeout    = 5 * time.Second
+	openGraphPageMaxBytes    = 2 * 1024 * 1024  // 2MB
+	openGraphImageMaxBytes   = 10 * 1024 * 1024 // 10MB
+	openGraphThumbnailWidth  = 100
+	openGraphThumbnailHeight = 100
+	openGraphJpegQuality     = 80
+	openGraphMaxImageDim     = 4000 // Max width or height for Open Graph images
+	openGraphUserFetchLimit  = 20   // Limit concurrent Open Graph fetches per user
+)
+
+type openGraphResult struct {
+	Title       string
+	Description string
+	ImageData   []byte
+}
+
+type UserSemaphoreManager struct {
+	pools sync.Map
+}
+
+func NewUserSemaphoreManager() *UserSemaphoreManager {
+	return &UserSemaphoreManager{}
+}
+
+func (usm *UserSemaphoreManager) ForUser(userID string) chan struct{} {
+	// LoadOrStore provides an atomic way to get or create a semaphore.
+	pool, _ := usm.pools.LoadOrStore(userID, make(chan struct{}, openGraphUserFetchLimit))
+	return pool.(chan struct{})
+}
+
+var (
+	urlRegex = regexp.MustCompile(`https?://[^\s"']*[^\"'\s\.,!?()[\]{}]`)
+
+	userSemaphoreManager = NewUserSemaphoreManager()
+
+	openGraphGroup singleflight.Group
+
+	openGraphCache = cache.New(5*time.Minute, 10*time.Minute) // Cache Open Graph data for 5 minutes, cleanup every 10 minutes
+
 )
 
 func Find(slice []string, val string) bool {
@@ -38,9 +99,8 @@ func isHTTPURL(input string) bool {
 	}
 	return parsed.Host != ""
 }
-
-func fetchURLBytes(resourceURL string) ([]byte, string, error) {
-	req, err := http.NewRequest("GET", resourceURL, nil)
+func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", resourceURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -55,10 +115,13 @@ func fetchURLBytes(resourceURL string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("unexpected status code %d", resp.StatusCode)
 	}
 
-	limitedBody := http.MaxBytesReader(nil, resp.Body, 10*1024*1024)
-	data, err := io.ReadAll(limitedBody)
+	lr := io.LimitReader(resp.Body, limit+1)
+	data, err := io.ReadAll(lr)
 	if err != nil {
 		return nil, "", err
+	}
+	if int64(len(data)) > limit {
+		return nil, "", fmt.Errorf("response exceeds allowed size (%d bytes)", limit)
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -67,6 +130,64 @@ func fetchURLBytes(resourceURL string) ([]byte, string, error) {
 	}
 
 	return data, contentType, nil
+}
+
+func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title, description string, imageData []byte) {
+	// Check cache first
+	if cachedData, found := openGraphCache.Get(urlStr); found {
+		if data, ok := cachedData.(openGraphResult); ok {
+			log.Debug().Str("url", urlStr).Msg("Open Graph data fetched from cache")
+			return data.Title, data.Description, data.ImageData
+		}
+	}
+
+	v, err, _ := openGraphGroup.Do(urlStr, func() (res any, err error) {
+		ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
+		defer cancel()
+
+		// Acquire a token from the semaphore pool
+		userPool := userSemaphoreManager.ForUser(userID)
+		select {
+		case userPool <- struct{}{}:
+			defer func() { <-userPool }()
+		case <-ctx.Done():
+			log.Warn().Str("url", urlStr).Msg("Open Graph data fetch timed out while waiting for a worker")
+			return nil, ctx.Err()
+		}
+
+		// Recover from panics and convert to error
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				log.Error().
+					Interface("panic_info", r).
+					Str("url", urlStr).
+					Bytes("stack", stack).
+					Msg("Panic recovered while fetching Open Graph data")
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}()
+
+		// Fetch Open Graph data
+		title, description, imageData := fetchOpenGraphData(ctx, urlStr)
+
+		// Store in cache
+		openGraphCache.Set(urlStr, openGraphResult{title, description, imageData}, cache.DefaultExpiration)
+
+		return openGraphResult{title, description, imageData}, nil
+	})
+
+	if err != nil {
+		log.Error().Err(err).Str("url", urlStr).Msg("Error fetching Open Graph data via singleflight")
+		return "", "", nil
+	}
+
+	if v == nil {
+		return "", "", nil
+	}
+
+	data := v.(openGraphResult)
+	return data.Title, data.Description, data.ImageData
 }
 
 // Update entry in User map
@@ -240,10 +361,19 @@ func callHookFileWithHmac(myurl string, payload map[string]string, id string, fi
 }
 
 func (s *server) respondWithJSON(w http.ResponseWriter, statusCode int, payload interface{}) {
-	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	if err := enc.Encode(payload); err != nil {
 		log.Error().Err(err).Msg("Failed to encode JSON response")
-		w.WriteHeader(http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(statusCode)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		log.Error().Err(err).Msg("Failed to write response body")
 	}
 }
 
@@ -356,4 +486,108 @@ func decryptHMACKey(encryptedData []byte) (string, error) {
 	}
 
 	return string(plaintext), nil
+}
+
+func extractFirstURL(text string) string {
+	match := urlRegex.FindString(text)
+	if match == "" {
+		return ""
+	}
+
+	return match
+}
+func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []byte) {
+	pageData, _, err := fetchURLBytes(ctx, urlStr, openGraphPageMaxBytes)
+	if err != nil {
+		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to fetch URL for Open Graph data")
+		return "", "", nil
+	}
+
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(pageData))
+	if err != nil {
+		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to parse HTML for Open Graph data")
+		return "", "", nil
+	}
+
+	title := doc.Find(`meta[property="og:title"]`).AttrOr("content", "")
+	if title == "" {
+		title = strings.TrimSpace(doc.Find("title").Text())
+	}
+
+	description := doc.Find(`meta[property="og:description"]`).AttrOr("content", "")
+	if description == "" {
+		description = doc.Find(`meta[name="description"]`).AttrOr("content", "")
+	}
+
+	var imageURLStr string
+	selectors := []struct {
+		selector string
+		attr     string
+	}{
+		{`meta[property="og:image"]`, "content"},
+		{`meta[property="twitter:image"]`, "content"},
+		{`link[rel="apple-touch-icon"]`, "href"},
+		{`link[rel="icon"]`, "href"},
+	}
+
+	for _, s := range selectors {
+		imageURLStr, _ = doc.Find(s.selector).Attr(s.attr)
+		if imageURLStr != "" {
+			break
+		}
+	}
+
+	pageURL, err := url.Parse(urlStr)
+	if err != nil {
+		log.Warn().Err(err).Str("url", urlStr).Msg("Failed to parse page URL for resolving image URL")
+		return title, description, nil
+	}
+
+	imageData := fetchOpenGraphImage(ctx, pageURL, imageURLStr)
+	return title, description, imageData
+}
+
+func fetchOpenGraphImage(ctx context.Context, pageURL *url.URL, imageURLStr string) []byte {
+	imageURL, err := url.Parse(imageURLStr)
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", imageURLStr).Msg("Failed to parse Open Graph image URL")
+		return nil
+	}
+
+	resolvedImageURL := pageURL.ResolveReference(imageURL).String()
+	imgBytes, _, err := fetchURLBytes(ctx, resolvedImageURL, openGraphImageMaxBytes)
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to fetch Open Graph image")
+		return nil
+	}
+
+	imgConfig, _, err := image.DecodeConfig(bytes.NewReader(imgBytes))
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to decode Open Graph image config")
+		return nil
+	}
+
+	if imgConfig.Width > openGraphMaxImageDim || imgConfig.Height > openGraphMaxImageDim {
+		log.Warn().
+			Int("width", imgConfig.Width).
+			Int("height", imgConfig.Height).
+			Str("imageURL", resolvedImageURL).
+			Msg("Open Graph image dimensions too large")
+		return nil
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(imgBytes))
+	if err != nil {
+		log.Warn().Err(err).Str("imageURL", resolvedImageURL).Msg("Failed to decode Open Graph image")
+		return nil
+	}
+
+	thumbnail := resize.Thumbnail(openGraphThumbnailWidth, openGraphThumbnailHeight, img, resize.Lanczos3)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: openGraphJpegQuality}); err != nil {
+		log.Warn().Err(err).Msg("Failed to encode thumbnail to JPEG")
+		return nil
+	}
+
+	return buf.Bytes()
 }

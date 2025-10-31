@@ -1122,7 +1122,7 @@ func (s *server) SendImage() http.HandlerFunc {
 				filedata = dataURL.Data
 			}
 		} else if isHTTPURL(t.Image) {
-			data, ct, err := fetchURLBytes(t.Image)
+			data, ct, err := fetchURLBytes(r.Context(), t.Image, openGraphImageMaxBytes)
 			if err != nil {
 				s.Respond(w, r, http.StatusBadRequest, errors.New(fmt.Sprintf("failed to fetch image from url: %v", err)))
 				return
@@ -1444,7 +1444,7 @@ func (s *server) SendVideo() http.HandlerFunc {
 
 			}
 		} else if isHTTPURL(t.Video) {
-			data, ct, err := fetchURLBytes(t.Video)
+			data, ct, err := fetchURLBytes(r.Context(), t.Video, openGraphImageMaxBytes)
 			if err != nil {
 				s.Respond(w, r, http.StatusBadRequest, errors.New(fmt.Sprintf("failed to fetch image from url: %v", err)))
 				return
@@ -2003,6 +2003,7 @@ func (s *server) SendMessage() http.HandlerFunc {
 	type textStruct struct {
 		Phone       string
 		Body        string
+		LinkPreview bool
 		Id          string
 		ContextInfo waE2E.ContextInfo
 		QuotedText  string `json:"QuotedText,omitempty"`
@@ -2051,9 +2052,27 @@ func (s *server) SendMessage() http.HandlerFunc {
 			msgid = t.Id
 		}
 
+		var (
+			url         string
+			title       string
+			description string
+			imageData   []byte
+		)
+
+		if t.LinkPreview {
+			url = extractFirstURL(t.Body)
+			if url != "" {
+				title, description, imageData = getOpenGraphData(r.Context(), url, txtid)
+			}
+		}
+
 		msg := &waE2E.Message{
 			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text: &t.Body,
+				Text:          proto.String(t.Body),
+				MatchedText:   proto.String(url),
+				Title:         proto.String(title),
+				Description:   proto.String(description),
+				JPEGThumbnail: imageData,
 			},
 		}
 

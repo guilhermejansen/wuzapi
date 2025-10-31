@@ -145,6 +145,28 @@ paths:
                     retention_days: 30
                   history: 0
   /admin/users/{id}:
+    get:
+      tags:
+        - Admin
+      summary: List users
+      description: Retrieve a list of users from the database, displaying also connection status and other info.
+      security:
+        - AdminAuth: [ ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID of the user to request
+          schema:
+            type: string
+            example: 4e4942c7dee1deef99ab8fd9f7350de5
+      responses:
+        200:
+          description: A JSON array of user objects
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": [ { "connected": true, "events": "All", "expiration": 0, "id": "bec45bb93cbd24cbec32941ec3c93a12", "jid": "5491155551122:12@s.whatsapp.net", "loggedIn": true, "name": "Some User", "proxy_url": "", "qrcode": "", "token": "d030sl9aDL39sl3075zz", "webhook": "https://some.domain/webhook" } ], "success": true }
     delete:
       tags:
         - Admin

@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	OpenGraphFetchTimeout    = 5 * time.Second
+	openGraphFetchTimeout    = 5 * time.Second
 	openGraphPageMaxBytes    = 2 * 1024 * 1024  // 2MB
 	openGraphImageMaxBytes   = 10 * 1024 * 1024 // 10MB
 	openGraphThumbnailWidth  = 100
@@ -152,12 +152,7 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 	}
 
 	v, err, _ := openGraphGroup.Do(urlStr, func() (interface{}, error) {
-		var (
-			title, description string
-			imageData          []byte
-		)
-
-		ctx, cancel := context.WithTimeout(ctx, OpenGraphFetchTimeout)
+		ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
 		defer cancel()
 
 		// Acquire a token from the semaphore pool
@@ -170,22 +165,24 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 			return nil, ctx.Err()
 		}
 
-		// Recover from panics inside this function
+		// Recover from panics and convert to error
 		defer func() {
 			if r := recover(); r != nil {
+				stack := debug.Stack()
 				log.Error().
 					Interface("panic_info", r).
 					Str("url", urlStr).
-					Bytes("stack", debug.Stack()).
+					Bytes("stack", stack).
 					Msg("Panic recovered while fetching Open Graph data")
 			}
 		}()
 
-		// Fetch data
-		title, description, imageData = fetchOpenGraphData(ctx, urlStr)
+		// Fetch Open Graph data
+		title, description, imageData := fetchOpenGraphData(ctx, urlStr)
 
 		// Store in cache
 		openGraphCache.Set(urlStr, openGraphResult{title, description, imageData}, cache.DefaultExpiration)
+
 		return openGraphResult{title, description, imageData}, nil
 	})
 

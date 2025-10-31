@@ -1362,6 +1362,29 @@ paths:
             application/json:
               schema:
                 example: { "code": 500, "error": "failed to get message history", "success": false }
+  /status/set/text:
+    post:
+      tags:
+        - Status
+      summary: Set status message
+      description: Updates the current user's status text, which is shown in the "About" section in the user profile.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/StatusText'
+
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: {"code":200,"data":{"Details":"Set"},"success":true}
+
   /call/reject:
     post:
       tags:
@@ -1989,6 +2012,14 @@ definitions:
       Media: 
         type: string
         example: audio
+  StatusText:
+    type: object
+    required:
+      - body
+    properties:
+      body:
+        type: string
+        example: Hi
   UserPresence:
     type: object
     required:

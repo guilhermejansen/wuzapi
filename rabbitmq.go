@@ -1,11 +1,11 @@
 package main
 
 import (
-	"os"
-	"sync"
 	"encoding/json"
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/rs/zerolog/log"
+	"os"
+	"sync"
 )
 
 var (

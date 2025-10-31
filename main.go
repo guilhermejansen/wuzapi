@@ -71,7 +71,9 @@ func newSafeHTTPClient() *http.Client {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, port, err := net.SplitHostPort(addr)
 				if err != nil {
-					host = addr
+					// The http transport should always provide an address in "host:port" format.
+					// If it doesn't, we can't safely perform our SSRF checks and should fail closed.
+					return nil, fmt.Errorf("unexpected address format from http transport: %q: %w", addr, err)
 				}
 
 				ips, err := net.LookupIP(host)

@@ -151,7 +151,7 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 		}
 	}
 
-	v, err, _ := openGraphGroup.Do(urlStr, func() (interface{}, error) {
+	v, err, _ := openGraphGroup.Do(urlStr, func() (res any, err error) {
 		ctx, cancel := context.WithTimeout(ctx, openGraphFetchTimeout)
 		defer cancel()
 
@@ -174,6 +174,7 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 					Str("url", urlStr).
 					Bytes("stack", stack).
 					Msg("Panic recovered while fetching Open Graph data")
+				err = fmt.Errorf("panic: %v", r)
 			}
 		}()
 

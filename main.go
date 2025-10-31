@@ -94,7 +94,9 @@ func newSafeHTTPClient() *http.Client {
 					if isPrivateOrLoopback(ip) {
 						log.Warn().Str("ip", ip.String()).Str("host", host).Msg("SSRF attempt detected: refused to connect to private or local address")
 						ssrfDetected = true
-						ssrfLastError = fmt.Errorf("ssrf attempt detected: refused to connect to private or local address %s", ip)
+						if ssrfLastError == nil {
+							ssrfLastError = fmt.Errorf("ssrf attempt detected: host '%s' resolves to one or more private IP addresses", host)
+						}
 						continue
 					}
 

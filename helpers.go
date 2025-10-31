@@ -56,27 +56,17 @@ type openGraphResult struct {
 }
 
 type UserSemaphoreManager struct {
-	mu    sync.Mutex
-	pools *cache.Cache
+	pools sync.Map
 }
 
 func NewUserSemaphoreManager() *UserSemaphoreManager {
-	return &UserSemaphoreManager{
-		pools: cache.New(30*time.Minute, 10*time.Minute),
-	}
+	return &UserSemaphoreManager{}
 }
 
 func (usm *UserSemaphoreManager) ForUser(userID string) chan struct{} {
-	usm.mu.Lock()
-	defer usm.mu.Unlock()
-
-	if x, found := usm.pools.Get(userID); found {
-		return x.(chan struct{})
-	}
-
-	pool := make(chan struct{}, openGraphUserFetchLimit)
-	usm.pools.Set(userID, pool, cache.DefaultExpiration)
-	return pool
+	// LoadOrStore provides an atomic way to get or create a semaphore.
+	pool, _ := usm.pools.LoadOrStore(userID, make(chan struct{}, openGraphUserFetchLimit))
+	return pool.(chan struct{})
 }
 
 var (
@@ -529,18 +519,22 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []b
 		description = doc.Find(`meta[name="description"]`).AttrOr("content", "")
 	}
 
-	imageURLStr := doc.Find(`meta[property="og:image"]`).AttrOr("content", "")
-	if imageURLStr == "" {
-		imageURLStr = doc.Find(`meta[property="twitter:image"]`).AttrOr("content", "")
+	var imageURLStr string
+	selectors := []struct {
+		selector string
+		attr     string
+	}{
+		{`meta[property="og:image"]`, "content"},
+		{`meta[property="twitter:image"]`, "content"},
+		{`link[rel="apple-touch-icon"]`, "href"},
+		{`link[rel="icon"]`, "href"},
 	}
-	if imageURLStr == "" {
-		imageURLStr = doc.Find(`link[rel="apple-touch-icon"]`).AttrOr("href", "")
-	}
-	if imageURLStr == "" {
-		imageURLStr = doc.Find(`link[rel="icon"]`).AttrOr("href", "")
-	}
-	if imageURLStr == "" {
-		return title, description, nil
+
+	for _, s := range selectors {
+		imageURLStr, _ = doc.Find(s.selector).Attr(s.attr)
+		if imageURLStr != "" {
+			break
+		}
 	}
 
 	pageURL, err := url.Parse(urlStr)

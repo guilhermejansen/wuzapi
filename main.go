@@ -117,8 +117,10 @@ func newSafeHTTPClient() *http.Client {
 				if ssrfDetected {
 					return nil, ssrfLastError
 				}
-
-				return nil, nil
+				if lastDialErr != nil {
+					return nil, lastDialErr
+				}
+				return nil, fmt.Errorf("no dialable IP addresses found for host %s", host)
 			},
 		},
 	}

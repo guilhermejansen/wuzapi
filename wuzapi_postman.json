@@ -520,6 +520,33 @@
           "response": []
         },
         {
+          "name": "Send Text Message with link preview",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "token",
+                "value": "{{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"Body\": \"Check my site? https://example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/chat/send/text",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "send", "text"]
+            },
+            "description": "Send text"
+          },
+          "response": []
+        },
+        {
           "name": "Send Text Message Reply",
           "request": {
             "method": "POST",

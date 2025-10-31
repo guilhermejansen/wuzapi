@@ -186,15 +186,8 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 		title, description, imageData = fetchOpenGraphData(ctx, urlStr)
 
 		// Store in cache
-		openGraphCache.Set(urlStr, struct {
-			Title, Description string
-			ImageData          []byte
-		}{title, description, imageData}, cache.DefaultExpiration)
-
-		return struct {
-			Title, Description string
-			ImageData          []byte
-		}{title, description, imageData}, nil
+		openGraphCache.Set(urlStr, openGraphResult{title, description, imageData}, cache.DefaultExpiration)
+		return openGraphResult{title, description, imageData}, nil
 	})
 
 	if err != nil {
@@ -206,10 +199,7 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 		return "", "", nil
 	}
 
-	data := v.(struct {
-		Title, Description string
-		ImageData          []byte
-	})
+	data := v.(openGraphResult)
 	return data.Title, data.Description, data.ImageData
 }
 

@@ -80,7 +80,7 @@ func (usm *UserSemaphoreManager) ForUser(userID string) chan struct{} {
 }
 
 var (
-	urlRegex = regexp.MustCompile(`https?://[^\s"']+`)
+	urlRegex = regexp.MustCompile(`https?://[^\s"']*[^\"'\s\.,!?()[\]{}]`)
 
 	userSemaphoreManager = NewUserSemaphoreManager()
 
@@ -505,7 +505,7 @@ func extractFirstURL(text string) string {
 		return ""
 	}
 
-	return strings.TrimRight(match, ".,!?()[]{}")
+	return match
 }
 func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []byte) {
 	pageData, _, err := fetchURLBytes(ctx, urlStr, openGraphPageMaxBytes)

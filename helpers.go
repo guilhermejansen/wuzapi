@@ -49,6 +49,12 @@ const (
 	openGraphUserFetchLimit  = 20   // Limit concurrent Open Graph fetches per user
 )
 
+type openGraphResult struct {
+	Title       string
+	Description string
+	ImageData   []byte
+}
+
 type UserSemaphoreManager struct {
 	mu    sync.Mutex
 	pools *cache.Cache
@@ -139,10 +145,7 @@ func fetchURLBytes(ctx context.Context, resourceURL string, limit int64) ([]byte
 func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title, description string, imageData []byte) {
 	// Check cache first
 	if cachedData, found := openGraphCache.Get(urlStr); found {
-		if data, ok := cachedData.(struct {
-			Title, Description string
-			ImageData          []byte
-		}); ok {
+		if data, ok := cachedData.(openGraphResult); ok {
 			log.Debug().Str("url", urlStr).Msg("Open Graph data fetched from cache")
 			return data.Title, data.Description, data.ImageData
 		}

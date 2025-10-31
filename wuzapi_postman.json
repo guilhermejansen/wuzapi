@@ -535,7 +535,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"Body\": \"Check my site? https://example.com\"\n}"
+              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"Body\": \"Check my site? https://example.com\",\n  \"LinkPreview\": true\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/chat/send/text",

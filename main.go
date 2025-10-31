@@ -78,28 +78,20 @@ func newSafeHTTPClient() *http.Client {
 				if err != nil {
 					return nil, fmt.Errorf("failed to resolve host '%s': %w", host, err)
 				}
-
 				if len(ips) == 0 {
 					return nil, fmt.Errorf("no IP addresses found for host: %s", host)
 				}
 
-				var lastErr error
-				for _, ip := range ips {
-					isPrivateOrLocal := false
-					if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-						isPrivateOrLocal = true
-						lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to loopback/link-local address %s", ip)
-					} else {
-						for _, block := range privateIPBlocks {
-							if block.Contains(ip) {
-								isPrivateOrLocal = true
-								lastErr = fmt.Errorf("ssrf attempt detected: refused to connect to private ip address %s", ip)
-								break
-							}
-						}
-					}
+				var (
+					lastDialErr   error
+					ssrfDetected  bool
+					ssrfLastError error
+				)
 
-					if isPrivateOrLocal {
+				for _, ip := range ips {
+					if isPrivateOrLoopback(ip) {
+						ssrfDetected = true
+						ssrfLastError = fmt.Errorf("ssrf attempt detected: refused to connect to private or local address %s", ip)
 						continue
 					}
 
@@ -108,24 +100,37 @@ func newSafeHTTPClient() *http.Client {
 						KeepAlive: 30 * time.Second,
 					}
 
-					var connAddr string
-					if port != "" {
-						connAddr = net.JoinHostPort(ip.String(), port)
-					} else {
-						connAddr = ip.String()
-					}
-
+					connAddr := net.JoinHostPort(ip.String(), port)
 					conn, err := dialer.DialContext(ctx, network, connAddr)
 					if err == nil {
 						return conn, nil
 					}
-					lastErr = err
+					lastDialErr = err
 				}
 
-				return nil, lastErr
+				// Prefer returning actual dial errors over SSRF detection errors
+				if lastDialErr != nil {
+					return nil, lastDialErr
+				}
+				if ssrfDetected {
+					return nil, ssrfLastError
+				}
+				return nil, fmt.Errorf("no valid IPs to connect to for host: %s", host)
 			},
 		},
 	}
+}
+
+func isPrivateOrLoopback(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	for _, block := range privateIPBlocks {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

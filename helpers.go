@@ -178,7 +178,6 @@ func getOpenGraphData(ctx context.Context, urlStr string, userID string) (title,
 					Str("url", urlStr).
 					Bytes("stack", debug.Stack()).
 					Msg("Panic recovered while fetching Open Graph data")
-				title, description, imageData = "", "", nil
 			}
 		}()
 

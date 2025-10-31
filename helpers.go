@@ -198,13 +198,13 @@ func updateUserInfo(values interface{}, field string, value string) interface{} 
 }
 
 // webhook for regular messages
-func callHook(myurl string, payload map[string]string, id string) {
-	callHookWithHmac(myurl, payload, id, nil)
+func callHook(myurl string, payload map[string]string, userID string) {
+	callHookWithHmac(myurl, payload, userID, nil)
 }
 
 // webhook for regular messages with HMAC
-func callHookWithHmac(myurl string, payload map[string]string, id string, encryptedHmacKey []byte) {
-	log.Info().Str("url", myurl).Msg("Sending POST to client " + id)
+func callHookWithHmac(myurl string, payload map[string]string, userID string, encryptedHmacKey []byte) {
+	log.Info().Str("url", myurl).Str("userID", userID).Msg("Sending POST to client")
 
 	// Log the payload map
 	log.Debug().Msg("Payload:")
@@ -212,7 +212,7 @@ func callHookWithHmac(myurl string, payload map[string]string, id string, encryp
 		log.Debug().Str(key, value).Msg("")
 	}
 
-	client := clientManager.GetHTTPClient(id)
+	client := clientManager.GetHTTPClient(userID)
 
 	format := os.Getenv("WEBHOOK_FORMAT")
 	if format == "json" {
@@ -226,7 +226,12 @@ func callHookWithHmac(myurl string, payload map[string]string, id string, encryp
 			var postmap map[string]interface{}
 			err := json.Unmarshal([]byte(jsonStr), &postmap)
 			if err == nil {
-				postmap["token"] = payload["token"]
+				if instanceName, ok := payload["instanceName"]; ok {
+					postmap["instanceName"] = instanceName
+				}
+
+				postmap["userID"] = userID
+
 				body = postmap
 			}
 		}
@@ -296,15 +301,15 @@ func callHookWithHmac(myurl string, payload map[string]string, id string, encryp
 }
 
 // webhook for messages with file attachments
-func callHookFile(myurl string, payload map[string]string, id string, file string) error {
-	return callHookFileWithHmac(myurl, payload, id, file, nil)
+func callHookFile(myurl string, payload map[string]string, userID string, file string) error {
+	return callHookFileWithHmac(myurl, payload, userID, file, nil)
 }
 
 // webhook for messages with file attachments and HMAC
-func callHookFileWithHmac(myurl string, payload map[string]string, id string, file string, encryptedHmacKey []byte) error {
+func callHookFileWithHmac(myurl string, payload map[string]string, userID string, file string, encryptedHmacKey []byte) error {
 	log.Info().Str("file", file).Str("url", myurl).Msg("Sending POST")
 
-	client := clientManager.GetHTTPClient(id)
+	client := clientManager.GetHTTPClient(userID)
 
 	// Create final payload map
 	finalPayload := make(map[string]string)

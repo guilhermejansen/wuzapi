@@ -375,7 +375,6 @@ func (s *server) respondWithJSON(w http.ResponseWriter, statusCode int, payload 
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
 	if err := enc.Encode(payload); err != nil {
 		log.Error().Err(err).Msg("Failed to encode JSON response")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -531,6 +530,9 @@ func fetchOpenGraphData(ctx context.Context, urlStr string) (string, string, []b
 	}
 
 	imageURLStr := doc.Find(`meta[property="og:image"]`).AttrOr("content", "")
+	if imageURLStr == "" {
+		imageURLStr = doc.Find(`meta[property="twitter:image"]`).AttrOr("content", "")
+	}
 	if imageURLStr == "" {
 		imageURLStr = doc.Find(`link[rel="apple-touch-icon"]`).AttrOr("href", "")
 	}

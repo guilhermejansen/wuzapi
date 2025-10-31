@@ -5912,3 +5912,59 @@ func (s *server) RejectCall() http.HandlerFunc {
 		return
 	}
 }
+
+// GetUserLID retrieves the Local ID (LID) for a given JID/Phone Number
+func (s *server) GetUserLID() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		// Get JID from URL parameter
+		vars := mux.Vars(r)
+		jidParam := vars["jid"]
+
+		if jidParam == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing jid parameter"))
+			return
+		}
+
+		// Parse the JID (phone number)
+		jid, ok := parseJID(jidParam)
+		if !ok {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("invalid jid format"))
+			return
+		}
+
+		client := clientManager.GetWhatsmeowClient(txtid)
+
+		// Get the LID for this phone number from the store
+		lid, err := client.Store.LIDs.GetLIDForPN(context.Background(), jid)
+		if err != nil {
+			log.Error().Err(err).Str("jid", jidParam).Msg("Failed to get LID for phone number")
+			s.Respond(w, r, http.StatusNotFound, errors.New(fmt.Sprintf("LID not found for this number: %v", err)))
+			return
+		}
+
+		if lid.IsEmpty() {
+			s.Respond(w, r, http.StatusNotFound, errors.New("LID not found for this number"))
+			return
+		}
+
+		// Return the LID
+		response := map[string]interface{}{
+			"jid": jid.String(),
+			"lid": lid.String(),
+		}
+
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}

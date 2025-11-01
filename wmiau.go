@@ -363,6 +363,10 @@ func parseJID(arg string) (types.JID, bool) {
 func (s *server) startClient(userID string, textjid string, token string, subscriptions []string) {
 	log.Info().Str("userid", userID).Str("jid", textjid).Msg("Starting websocket connection to Whatsapp")
 
+	// Connection retry constants
+	const maxConnectionRetries = 3
+	const connectionRetryBaseWait = 5 * time.Second
+
 	var deviceStore *store.Device
 	var err error
 
@@ -396,26 +400,14 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 
 	// Now we can use the client with the manager
 	clientManager.SetWhatsmeowClient(userID, client)
-	if textjid != "" {
-		jid, _ := parseJID(textjid)
-		deviceStore, err = container.GetDevice(context.Background(), jid)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to get device")
-			deviceStore = container.NewDevice()
-		}
-	} else {
-		log.Warn().Msg("No jid found. Creating new device")
-		deviceStore = container.NewDevice()
-	}
 
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_UNKNOWN.Enum()
 	store.DeviceProps.Os = osName
 
-	clientManager.SetWhatsmeowClient(userID, client)
 	mycli := MyClient{client, 1, userID, token, subscriptions, s.db, s}
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
 
-	// CORREÇÃO: Armazenar o MyClient no clientManager
+	// Store the MyClient in clientManager
 	clientManager.SetMyClient(userID, &mycli)
 
 	httpClient := resty.New()
@@ -434,7 +426,7 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 		}
 	})
 
-	// NEW: set proxy if defined in DB (assumes users table contains proxy_url column)
+	// Set proxy if defined in DB (assumes users table contains proxy_url column)
 	var proxyURL string
 	err = s.db.Get(&proxyURL, "SELECT proxy_url FROM users WHERE id=$1", userID)
 	if err == nil && proxyURL != "" {
@@ -473,7 +465,7 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 				return
 			}
 		} else {
-			err = client.Connect() // Si no conectamos no se puede generar QR
+			err = client.Connect() // Must connect to generate QR code
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to connect client")
 				return
@@ -557,16 +549,15 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 		// Already logged in, just connect
 		log.Info().Msg("Already logged in, just connect")
 
-		// Retry logic com backoff exponencial
-		maxRetries := 3
+		// Retry logic with linear backoff
 		var lastErr error
 
-		for attempt := 0; attempt < maxRetries; attempt++ {
+		for attempt := 0; attempt < maxConnectionRetries; attempt++ {
 			if attempt > 0 {
-				waitTime := time.Duration(attempt) * 5 * time.Second
+				waitTime := time.Duration(attempt) * connectionRetryBaseWait
 				log.Warn().
 					Int("attempt", attempt+1).
-					Int("max_retries", maxRetries).
+					Int("max_retries", maxConnectionRetries).
 					Dur("wait_time", waitTime).
 					Msg("Retrying connection after delay")
 				time.Sleep(waitTime)
@@ -584,7 +575,7 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 			log.Warn().
 				Err(err).
 				Int("attempt", attempt+1).
-				Int("max_retries", maxRetries).
+				Int("max_retries", maxConnectionRetries).
 				Msg("Failed to connect to WhatsApp")
 		}
 
@@ -592,7 +583,7 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 			log.Error().
 				Err(lastErr).
 				Str("userid", userID).
-				Int("attempts", maxRetries).
+				Int("attempts", maxConnectionRetries).
 				Msg("Failed to connect to WhatsApp after all retry attempts")
 
 			clientManager.DeleteWhatsmeowClient(userID)
@@ -605,12 +596,12 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 				log.Error().Err(dbErr).Msg("Failed to update user status after connection error")
 			}
 
-			mycli := MyClient{client, 1, userID, token, subscriptions, s.db, s}
+			// Use the existing mycli instance from outer scope
 			postmap := make(map[string]interface{})
 			postmap["event"] = "ConnectFailure"
 			postmap["error"] = lastErr.Error()
 			postmap["type"] = "ConnectFailure"
-			postmap["attempts"] = maxRetries
+			postmap["attempts"] = maxConnectionRetries
 			postmap["reason"] = "Failed to connect after retry attempts"
 			sendEventWithWebHook(&mycli, postmap, "")
 

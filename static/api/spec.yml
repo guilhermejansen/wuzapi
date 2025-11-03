@@ -2211,7 +2211,7 @@ definitions:
     type: object
     required: 
       - Phone
-      - Image 
+      - Image
     properties:
       Phone:
         type: string
@@ -2229,7 +2229,7 @@ definitions:
         $ref: "#/definitions/ContextInfo"
   MessageAudio:
     type: object
-    required: 
+    required:
       - Phone
       - Audio
     properties:
@@ -2242,6 +2242,22 @@ definitions:
       Id:
         type: string
         example: "ABCDABCD1234"
+      PTT:
+        type: boolean
+        example: true
+      MimeType:
+        type: string
+        example: "audio/ogg; codecs=opus"
+      Seconds:
+        type: integer
+        format: uint32
+        example: 15
+      Waveform:
+        type: array
+        items:
+          type: integer
+          format: byte
+        example: [0, 0, 0, 12, 20, 20, 22, 10, 5, 0, 0, 0]
       ContextInfo:
         $ref: "#/definitions/ContextInfo"
   MessageVideo:

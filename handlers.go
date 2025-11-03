@@ -931,6 +931,10 @@ func (s *server) SendAudio() http.HandlerFunc {
 		Audio       string
 		Caption     string
 		Id          string
+		PTT         *bool  `json:"ptt,omitempty"`
+		MimeType    string `json:"mimetype,omitempty"`
+		Seconds     uint32
+		Waveform    []byte
 		ContextInfo waE2E.ContextInfo
 	}
 
@@ -979,7 +983,7 @@ func (s *server) SendAudio() http.HandlerFunc {
 		var uploaded whatsmeow.UploadResponse
 		var filedata []byte
 
-		if t.Audio[0:14] == "data:audio/ogg" {
+		if strings.HasPrefix(t.Audio, "data:audio/") {
 			var dataURL, err = dataurl.DecodeString(t.Audio)
 			if err != nil {
 				s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode base64 encoded data from payload"))
@@ -993,23 +997,40 @@ func (s *server) SendAudio() http.HandlerFunc {
 				}
 			}
 		} else {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("audio data should start with \"data:audio/ogg;base64,\""))
+			s.Respond(w, r, http.StatusBadRequest, errors.New("audio data should start with \"data:audio/\""))
 			return
 		}
 
-		ptt := true
-		mime := "audio/ogg; codecs=opus"
+		// Configure PTT (Push to Talk) - default is false for voice messages
+		ptt := false
+		if t.PTT != nil {
+			ptt = *t.PTT
+		}
+
+		// Configure MIME type
+		var mime string
+		if t.MimeType != "" {
+			mime = t.MimeType
+		} else {
+			// Default MIME types based on PTT setting
+			if ptt {
+				mime = "audio/ogg; codecs=opus"
+			} else {
+				mime = "audio/mpeg"
+			}
+		}
 
 		msg := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
-			URL:        proto.String(uploaded.URL),
-			DirectPath: proto.String(uploaded.DirectPath),
-			MediaKey:   uploaded.MediaKey,
-			//Mimetype:      proto.String(http.DetectContentType(filedata)),
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
 			Mimetype:      &mime,
 			FileEncSHA256: uploaded.FileEncSHA256,
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uint64(len(filedata))),
 			PTT:           &ptt,
+			Seconds:       proto.Uint32(t.Seconds),
+			Waveform:      t.Waveform,
 		}}
 
 		if t.ContextInfo.StanzaID != nil {

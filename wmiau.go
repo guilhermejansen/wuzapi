@@ -363,6 +363,10 @@ func parseJID(arg string) (types.JID, bool) {
 func (s *server) startClient(userID string, textjid string, token string, subscriptions []string) {
 	log.Info().Str("userid", userID).Str("jid", textjid).Msg("Starting websocket connection to Whatsapp")
 
+	// Connection retry constants
+	const maxConnectionRetries = 3
+	const connectionRetryBaseWait = 5 * time.Second
+
 	var deviceStore *store.Device
 	var err error
 
@@ -396,25 +400,14 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 
 	// Now we can use the client with the manager
 	clientManager.SetWhatsmeowClient(userID, client)
-	if textjid != "" {
-		jid, _ := parseJID(textjid)
-		deviceStore, err = container.GetDevice(context.Background(), jid)
-		if err != nil {
-			panic(err)
-		}
-	} else {
-		log.Warn().Msg("No jid found. Creating new device")
-		deviceStore = container.NewDevice()
-	}
 
 	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_UNKNOWN.Enum()
 	store.DeviceProps.Os = osName
 
-	clientManager.SetWhatsmeowClient(userID, client)
 	mycli := MyClient{client, 1, userID, token, subscriptions, s.db, s}
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
 
-	// CORREÇÃO: Armazenar o MyClient no clientManager
+	// Store the MyClient in clientManager
 	clientManager.SetMyClient(userID, &mycli)
 
 	httpClient := resty.New()
@@ -433,32 +426,32 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 		}
 	})
 
-	// NEW: set proxy if defined in DB (assumes users table contains proxy_url column)
+	// Set proxy if defined in DB (assumes users table contains proxy_url column)
 	var proxyURL string
 	err = s.db.Get(&proxyURL, "SELECT proxy_url FROM users WHERE id=$1", userID)
 	if err == nil && proxyURL != "" {
-
 		parsed, perr := url.Parse(proxyURL)
 		if perr != nil {
 			log.Warn().Err(perr).Str("proxy", proxyURL).Msg("Invalid proxy URL, skipping proxy setup")
 		} else {
+
+			log.Info().Str("proxy", proxyURL).Msg("Configuring proxy")
+
 			if parsed.Scheme == "socks5" || parsed.Scheme == "socks5h" {
-				// Build SOCKS dialer from URL (supports user:pass in URL)
 				dialer, derr := proxy.FromURL(parsed, nil)
 				if derr != nil {
 					log.Warn().Err(derr).Str("proxy", proxyURL).Msg("Failed to build SOCKS proxy dialer, skipping proxy setup")
 				} else {
-					// Apply proxy to both clients now that we know it's valid.
 					httpClient.SetProxy(proxyURL)
 					client.SetSOCKSProxy(dialer, whatsmeow.SetProxyOptions{})
+					log.Info().Msg("SOCKS proxy configured successfully")
 				}
 			} else {
-				// For http/https, apply to both clients.
 				httpClient.SetProxy(proxyURL)
 				client.SetProxyAddress(parsed.String(), whatsmeow.SetProxyOptions{})
+				log.Info().Msg("HTTP/HTTPS proxy configured successfully")
 			}
 		}
-
 	}
 	clientManager.SetHTTPClient(userID, httpClient)
 
@@ -472,7 +465,7 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 				return
 			}
 		} else {
-			err = client.Connect() // Si no conectamos no se puede generar QR
+			err = client.Connect() // Must connect to generate QR code
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to connect client")
 				return
@@ -555,9 +548,64 @@ func (s *server) startClient(userID string, textjid string, token string, subscr
 	} else {
 		// Already logged in, just connect
 		log.Info().Msg("Already logged in, just connect")
-		err = client.Connect()
-		if err != nil {
-			panic(err)
+
+		// Retry logic with linear backoff
+		var lastErr error
+
+		for attempt := 0; attempt < maxConnectionRetries; attempt++ {
+			if attempt > 0 {
+				waitTime := time.Duration(attempt) * connectionRetryBaseWait
+				log.Warn().
+					Int("attempt", attempt+1).
+					Int("max_retries", maxConnectionRetries).
+					Dur("wait_time", waitTime).
+					Msg("Retrying connection after delay")
+				time.Sleep(waitTime)
+			}
+
+			err = client.Connect()
+			if err == nil {
+				log.Info().
+					Int("attempt", attempt+1).
+					Msg("Successfully connected to WhatsApp")
+				break
+			}
+
+			lastErr = err
+			log.Warn().
+				Err(err).
+				Int("attempt", attempt+1).
+				Int("max_retries", maxConnectionRetries).
+				Msg("Failed to connect to WhatsApp")
+		}
+
+		if lastErr != nil {
+			log.Error().
+				Err(lastErr).
+				Str("userid", userID).
+				Int("attempts", maxConnectionRetries).
+				Msg("Failed to connect to WhatsApp after all retry attempts")
+
+			clientManager.DeleteWhatsmeowClient(userID)
+			clientManager.DeleteMyClient(userID)
+			clientManager.DeleteHTTPClient(userID)
+
+			sqlStmt := `UPDATE users SET qrcode='', connected=0 WHERE id=$1`
+			_, dbErr := s.db.Exec(sqlStmt, userID)
+			if dbErr != nil {
+				log.Error().Err(dbErr).Msg("Failed to update user status after connection error")
+			}
+
+			// Use the existing mycli instance from outer scope
+			postmap := make(map[string]interface{})
+			postmap["event"] = "ConnectFailure"
+			postmap["error"] = lastErr.Error()
+			postmap["type"] = "ConnectFailure"
+			postmap["attempts"] = maxConnectionRetries
+			postmap["reason"] = "Failed to connect after retry attempts"
+			sendEventWithWebHook(&mycli, postmap, "")
+
+			return
 		}
 	}
 

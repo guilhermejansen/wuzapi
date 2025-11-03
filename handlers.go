@@ -1001,8 +1001,8 @@ func (s *server) SendAudio() http.HandlerFunc {
 			return
 		}
 
-		// Configure PTT (Push to Talk) - default is false for voice messages
-		ptt := false
+		// Configure PTT (Push to Talk) - default is true, setting it to false is a breaking change
+		ptt := true
 		if t.PTT != nil {
 			ptt = *t.PTT
 		}

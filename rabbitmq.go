@@ -214,19 +214,17 @@ func sendToGlobalRabbit(jsonData []byte, token string, userID string, queueName 
 		rabbitQueueEnv := os.Getenv("RABBITMQ_QUEUE")
 
 		if rabbitURL != "" || rabbitQueueEnv != "" {
+			urlSet := "no"
+			if rabbitURL != "" {
+				urlSet = "yes"
+			}
+			queueSet := "no"
+			if rabbitQueueEnv != "" {
+				queueSet = "yes"
+			}
 			log.Error().
-				Str("rabbitmq_url_set", func() string {
-					if rabbitURL != "" {
-						return "yes"
-					}
-					return "no"
-				}()).
-				Str("rabbitmq_queue_set", func() string {
-					if rabbitQueueEnv != "" {
-						return "yes"
-					}
-					return "no"
-				}()).
+				Str("rabbitmq_url_set", urlSet).
+				Str("rabbitmq_queue_set", queueSet).
 				Msg("RabbitMQ is configured but disabled due to connection failure. Event not published to queue.")
 		} else {
 			log.Debug().Msg("RabbitMQ not configured. Event not published to queue.")

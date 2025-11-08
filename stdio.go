@@ -133,9 +133,11 @@ func (ss *stdioServer) executeHTTPHandler(req *stdioRequest, httpMethod, httpPat
 	httpReq := httptest.NewRequest(httpMethod, httpPath, body)
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	// Set user token header (for user authentication)
 	if token, ok := req.Params["token"].(string); ok {
-		httpReq.Header.Set("Authorization", token)
+		httpReq.Header.Set("token", token)
 	}
+	// Set admin token header (for admin authentication)
 	if adminToken, ok := req.Params["adminToken"].(string); ok {
 		httpReq.Header.Set("Authorization", adminToken)
 	}

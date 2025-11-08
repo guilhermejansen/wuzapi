@@ -180,12 +180,6 @@ func main() {
 		logOutput = os.Stderr
 	}
 
-	// In stdio mode, always log to stderr to avoid interfering with JSON responses on stdout
-	logOutput := os.Stdout
-	if *mode == "stdio" {
-		logOutput = os.Stderr
-	}
-
 	if *logType == "json" {
 		log.Logger = zerolog.New(logOutput).
 			With().

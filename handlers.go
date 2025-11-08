@@ -6042,3 +6042,88 @@ func (s *server) GetUserLID() http.HandlerFunc {
 		}
 	}
 }
+
+// RequestUnavailableMessage requests a copy of a message that couldn't be decrypted
+func (s *server) RequestUnavailableMessage() http.HandlerFunc {
+
+	type requestUnavailableMessageStruct struct {
+		Chat   string `json:"chat"`   // Chat JID (e.g., "5511999999999@s.whatsapp.net" or "120363123456789012@g.us")
+		Sender string `json:"sender"` // Sender JID (e.g., "5511999999999@s.whatsapp.net")
+		ID     string `json:"id"`     // Message ID
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var t requestUnavailableMessageStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
+			return
+		}
+
+		// Validate required fields
+		if t.Chat == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Chat in Payload"))
+			return
+		}
+
+		if t.Sender == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Sender in Payload"))
+			return
+		}
+
+		if t.ID == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing ID in Payload"))
+			return
+		}
+
+		// Parse JIDs
+		chatJID, err := types.ParseJID(t.Chat)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("invalid Chat JID format"))
+			return
+		}
+
+		senderJID, err := types.ParseJID(t.Sender)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("invalid Sender JID format"))
+			return
+		}
+
+		// Build the unavailable message request
+		unavailableMessage := clientManager.GetWhatsmeowClient(txtid).BuildUnavailableMessageRequest(chatJID, senderJID, t.ID)
+
+		// Send the request with Peer: true as required by the documentation
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		resp, err := clientManager.GetWhatsmeowClient(txtid).SendMessage(ctx, chatJID, unavailableMessage, whatsmeow.SendRequestExtra{Peer: true})
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to send unavailable message request: %s", err)))
+			return
+		}
+
+		response := map[string]interface{}{
+			"success":    true,
+			"message":    "Unavailable message request sent successfully",
+			"request_id": resp.ID,
+			"chat":       t.Chat,
+			"sender":     t.Sender,
+			"message_id": t.ID,
+			"timestamp":  resp.Timestamp,
+		}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}

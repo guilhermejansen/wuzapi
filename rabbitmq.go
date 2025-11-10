@@ -263,3 +263,39 @@ func sendToGlobalRabbit(jsonData []byte, token string, userID string, queueName 
 		log.Error().Err(err).Msg("Failed to publish to RabbitMQ")
 	}
 }
+
+func PublishFileErrorToQueue(payload WebhookFileErrorPayload) {
+
+	queueName := *webhookErrorQueueName
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to marshal file error payload for RabbitMQ")
+		return
+	}
+
+	err = PublishToRabbit(body, queueName)
+	if err != nil {
+		log.Error().Str("queue", queueName).Msg("Failed to publish file error payload to queue")
+	} else {
+		log.Info().Str("queue", queueName).Msg("File error payload successfully published to queue")
+	}
+}
+
+func PublishDataErrorToQueue(payload WebhookErrorPayload) {
+
+	queueName := *webhookErrorQueueName
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to marshal file error payload for RabbitMQ")
+		return
+	}
+
+	err = PublishToRabbit(body, queueName)
+	if err != nil {
+		log.Error().Str("queue", queueName).Msg("Failed to publish file error payload to queue")
+	} else {
+		log.Info().Str("queue", queueName).Msg("File error payload successfully published to queue")
+	}
+}

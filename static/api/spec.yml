@@ -929,6 +929,125 @@ paths:
                   success:
                     type: boolean
                     example: false
+  /chat/request-unavailable-message:
+    post:
+      tags:
+        - Chat
+      summary: Request unavailable message
+      description: |
+        Requests a copy of a message that couldn't be decrypted from the sender's primary device. 
+        This is useful when you receive an encrypted message that your client was unable to decrypt.
+
+        The response to this request will come as a normal message event with the `UnavailableRequestID` field set to the request message ID. 
+        The sender's primary device will attempt to resend the message content.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Chat:
+                  type: string
+                  description: Chat JID where the message was sent (e.g., "5511999999999@s.whatsapp.net" for individual chat or "120363123456789012@g.us" for group chat)
+                  example: "5511999999999@s.whatsapp.net"
+                Sender:
+                  type: string
+                  description: JID of the user who sent the message
+                  example: "5511999999999@s.whatsapp.net"
+                ID:
+                  type: string
+                  description: Message ID of the undecrypted message
+                  example: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+              required:
+                - Chat
+                - Sender
+                - ID
+            examples:
+              individual_chat:
+                summary: Individual chat example
+                value:
+                  Chat: "5511999999999@s.whatsapp.net"
+                  Sender: "5511999999999@s.whatsapp.net"
+                  ID: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+              group_chat:
+                summary: Group chat example
+                value:
+                  Chat: "120363123456789012@g.us"
+                  Sender: "5511999999999@s.whatsapp.net"
+                  ID: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+      responses:
+        200:
+          description: Unavailable message request sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+                        example: true
+                      message:
+                        type: string
+                        example: "Unavailable message request sent successfully"
+                      request_id:
+                        type: string
+                        example: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+                      chat:
+                        type: string
+                        example: "5511999999999@s.whatsapp.net"
+                      sender:
+                        type: string
+                        example: "5511999999999@s.whatsapp.net"
+                      message_id:
+                        type: string
+                        example: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+                      timestamp:
+                        type: integer
+                        example: 1640995200
+                  success:
+                    type: boolean
+                    example: true
+        400:
+          description: Bad Request - Missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 400
+                  error:
+                    type: string
+                    example: "missing Chat in Payload"
+                  success:
+                    type: boolean
+                    example: false
+        500:
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 500
+                  error:
+                    type: string
+                    example: "failed to send unavailable message request: context deadline exceeded"
+                  success:
+                    type: boolean
+                    example: false
   /chat/send/image:
     post:
       tags:

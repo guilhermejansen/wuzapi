@@ -6055,7 +6055,9 @@ func (s *server) RequestUnavailableMessage() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
 
-		if clientManager.GetWhatsmeowClient(txtid) == nil {
+		client := clientManager.GetWhatsmeowClient(txtid)
+
+		if client == nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
 			return
 		}
@@ -6098,13 +6100,13 @@ func (s *server) RequestUnavailableMessage() http.HandlerFunc {
 		}
 
 		// Build the unavailable message request
-		unavailableMessage := clientManager.GetWhatsmeowClient(txtid).BuildUnavailableMessageRequest(chatJID, senderJID, t.ID)
+		unavailableMessage := client.BuildUnavailableMessageRequest(chatJID, senderJID, t.ID)
 
 		// Send the request with Peer: true as required by the documentation
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		resp, err := clientManager.GetWhatsmeowClient(txtid).SendMessage(ctx, chatJID, unavailableMessage, whatsmeow.SendRequestExtra{Peer: true})
+		resp, err := client.SendMessage(ctx, chatJID, unavailableMessage, whatsmeow.SendRequestExtra{Peer: true})
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to send unavailable message request: %s", err)))
 			return
@@ -6117,7 +6119,7 @@ func (s *server) RequestUnavailableMessage() http.HandlerFunc {
 			"chat":       t.Chat,
 			"sender":     t.Sender,
 			"message_id": t.ID,
-			"timestamp":  resp.Timestamp,
+			"timestamp":  resp.Timestamp.Unix(),
 		}
 		responseJson, err := json.Marshal(response)
 		if err != nil {

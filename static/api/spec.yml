@@ -949,35 +949,35 @@ paths:
             schema:
               type: object
               properties:
-                Chat:
+                chat:
                   type: string
                   description: Chat JID where the message was sent (e.g., "5511999999999@s.whatsapp.net" for individual chat or "120363123456789012@g.us" for group chat)
                   example: "5511999999999@s.whatsapp.net"
-                Sender:
+                sender:
                   type: string
                   description: JID of the user who sent the message
                   example: "5511999999999@s.whatsapp.net"
-                ID:
+                id:
                   type: string
                   description: Message ID of the undecrypted message
                   example: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
               required:
-                - Chat
-                - Sender
-                - ID
+                - chat
+                - sender
+                - id
             examples:
               individual_chat:
                 summary: Individual chat example
                 value:
-                  Chat: "5511999999999@s.whatsapp.net"
-                  Sender: "5511999999999@s.whatsapp.net"
-                  ID: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+                  chat: "5511999999999@s.whatsapp.net"
+                  sender: "5511999999999@s.whatsapp.net"
+                  id: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
               group_chat:
                 summary: Group chat example
                 value:
-                  Chat: "120363123456789012@g.us"
-                  Sender: "5511999999999@s.whatsapp.net"
-                  ID: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+                  chat: "120363123456789012@g.us"
+                  sender: "5511999999999@s.whatsapp.net"
+                  id: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
       responses:
         200:
           description: Unavailable message request sent successfully

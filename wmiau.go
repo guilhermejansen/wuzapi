@@ -687,6 +687,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 			return
 		}
 
+		postmap["type"] = "PairSuccess"
+		dowebhook = 1
+
 		myuserinfo, found := userinfocache.Get(mycli.token)
 		if !found {
 			log.Warn().Msg("No user info cached on pairing?")

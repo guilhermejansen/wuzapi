@@ -49,6 +49,7 @@ var (
 	globalHMACKey       = flag.String("globalhmackey", "", "Global HMAC key for webhook signing")
 	globalWebhook       = flag.String("globalwebhook", "", "Global webhook URL to receive all events from all users")
 	versionFlag         = flag.Bool("version", false, "Display version information and exit")
+	mode                = flag.String("mode", "http", "Server mode: http or stdio")
 
 	globalHMACKeyEncrypted []byte
 
@@ -138,7 +139,7 @@ func isPrivateOrLoopback(ip net.IP) bool {
 	return false
 }
 
-func init() {
+func main() {
 	for _, cidr := range []string{
 		"127.0.0.0/8",    // IPv4 loopback
 		"10.0.0.0/8",     // RFC1918
@@ -172,26 +173,22 @@ func init() {
 		fmt.Printf("WuzAPI version %s\n", version)
 		os.Exit(0)
 	}
-	tz := os.Getenv("TZ")
-	if tz != "" {
-		loc, err := time.LoadLocation(tz)
-		if err != nil {
-			log.Warn().Err(err).Msgf("It was not possible to define TZ=%q, using UTC", tz)
-		} else {
-			time.Local = loc
-			log.Info().Str("TZ", tz).Msg("Timezone defined")
-		}
+
+	// In stdio mode, always log to stderr to avoid interfering with JSON responses on stdout
+	logOutput := os.Stdout
+	if *mode == "stdio" {
+		logOutput = os.Stderr
 	}
 
 	if *logType == "json" {
-		log.Logger = zerolog.New(os.Stdout).
+		log.Logger = zerolog.New(logOutput).
 			With().
 			Timestamp().
 			Str("role", filepath.Base(os.Args[0])).
 			Logger()
 	} else {
 		output := zerolog.ConsoleWriter{
-			Out:        os.Stdout,
+			Out:        logOutput,
 			TimeFormat: "2006-01-02 15:04:05 -07:00",
 			NoColor:    !*colorOutput,
 		}
@@ -220,6 +217,18 @@ func init() {
 			Timestamp().
 			Str("role", filepath.Base(os.Args[0])).
 			Logger()
+	}
+
+	// Setup timezone (after logger is configured)
+	tz := os.Getenv("TZ")
+	if tz != "" {
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			log.Warn().Err(err).Msgf("It was not possible to define TZ=%q, using UTC", tz)
+		} else {
+			time.Local = loc
+			log.Info().Str("TZ", tz).Msg("Timezone defined")
+		}
 	}
 
 	if *adminToken == "" {
@@ -292,9 +301,7 @@ func init() {
 	}
 
 	InitRabbitMQ()
-}
 
-func main() {
 	ex, err := os.Executable()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to get executable path")
@@ -357,6 +364,14 @@ func main() {
 
 	s.connectOnStartup()
 
+	if *mode == "stdio" {
+		startStdioMode(s)
+	} else {
+		startHTTPMode(s)
+	}
+}
+
+func startHTTPMode(s *server) {
 	srv := &http.Server{
 		Addr:              *address + ":" + *port,
 		Handler:           s.router,
@@ -415,5 +430,13 @@ func main() {
 	}()
 	log.Info().Str("address", *address).Str("port", *port).Msg("Server started. Waiting for connections...")
 	select {}
+}
 
+func startStdioMode(s *server) {
+	stdioServer := NewStdioServer(s)
+	if err := stdioServer.Start(); err != nil {
+		log.Error().Err(err).Msg("Stdio server error")
+		os.Exit(1)
+	}
+	log.Info().Msg("Stdio server exited properly")
 }

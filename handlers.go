@@ -2467,19 +2467,64 @@ func (s *server) RequestHistorySync() http.HandlerFunc {
 			return
 		}
 
-		info, found := lastMessageCache.Get(txtid)
-		if !found {
+		// Parse query parameters
+		query := r.URL.Query()
+
+		// Default count is 50, can be overridden by query parameter
+		count := 50
+		if countStr := query.Get("count"); countStr != "" {
+			if parsedCount, err := strconv.Atoi(countStr); err == nil && parsedCount > 0 {
+				count = parsedCount
+			}
+		}
+
+		// Get or create MessageInfo from cache or query parameters
+		var info *types.MessageInfo
+		if cachedInfo, found := lastMessageCache.Get(txtid); found {
+			info = cachedInfo.(*types.MessageInfo)
+		} else {
 			info = &types.MessageInfo{}
 		}
 
-		historyMsg := clientManager.GetWhatsmeowClient(txtid).BuildHistorySyncRequest(info.(*types.MessageInfo), 50)
+		// Override MessageInfo fields with query parameters if provided
+		if chatJIDStr := query.Get("chat_jid"); chatJIDStr != "" {
+			if chatJID, err := types.ParseJID(chatJIDStr); err == nil {
+				info.Chat = chatJID
+			}
+		}
+
+		if messageID := query.Get("oldest_msg_id"); messageID != "" {
+			info.ID = types.MessageID(messageID)
+		}
+
+		if oldestFromMeStr := query.Get("oldest_msg_from_me"); oldestFromMeStr != "" {
+			if oldestFromMe, err := strconv.ParseBool(oldestFromMeStr); err == nil {
+				info.IsFromMe = oldestFromMe
+			}
+		}
+
+		if timestampStr := query.Get("oldest_msg_timestamp"); timestampStr != "" {
+			if timestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+				info.Timestamp = time.UnixMilli(timestamp)
+			}
+		}
+
+		historyMsg := clientManager.GetWhatsmeowClient(txtid).BuildHistorySyncRequest(info, count)
 		if historyMsg == nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("Failed to build history sync request."))
 			return
 		}
 
 		targetJID := types.JID{Server: "s.whatsapp.net", User: "status"}
-		log.Debug().Str("userID", txtid).Str("target", targetJID.String()).Msg("Preparing to send history sync request")
+		log.Debug().
+			Str("userID", txtid).
+			Str("target", targetJID.String()).
+			Int("count", count).
+			Str("chat_jid", info.Chat.String()).
+			Str("oldest_msg_id", string(info.ID)).
+			Bool("oldest_msg_from_me", info.IsFromMe).
+			Time("oldest_msg_timestamp", info.Timestamp).
+			Msg("Preparing to send history sync request")
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), clientManager.GetMyClient(txtid).WAClient.Store.ID.ToNonAD(), historyMsg, whatsmeow.SendRequestExtra{Peer: true})
 		if err != nil {
@@ -2493,8 +2538,22 @@ func (s *server) RequestHistorySync() http.HandlerFunc {
 			return
 		}
 
-		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Msg("History sync request sent")
-		response := map[string]interface{}{"Details": "History sync request Sent", "Timestamp": resp.Timestamp.Unix()}
+		log.Info().
+			Str("chat_jid", info.Chat.String()).
+			Str("oldest_msg_id", string(info.ID)).
+			Bool("oldest_msg_from_me", info.IsFromMe).
+			Time("oldest_msg_timestamp", info.Timestamp).
+			Msg("History sync request sent")
+
+		response := map[string]interface{}{
+			"details":              "History sync request Sent",
+			"timestamp":            resp.Timestamp.Unix(),
+			"count":                count,
+			"chat_jid":             info.Chat.String(),
+			"oldest_msg_id":        string(info.ID),
+			"oldest_msg_from_me":   info.IsFromMe,
+			"oldest_msg_timestamp": info.Timestamp.UnixMilli(),
+		}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)

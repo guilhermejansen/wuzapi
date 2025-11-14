@@ -1341,6 +1341,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		}
 	case *events.HistorySync:
 		postmap["type"] = "HistorySync"
+		log.Info().Msg("HistorySync event received")
 		dowebhook = 1
 	case *events.AppState:
 		log.Info().Str("index", fmt.Sprintf("%+v", evt.Index)).Str("actionValue", fmt.Sprintf("%+v", evt.SyncActionValue)).Msg("App state event received")

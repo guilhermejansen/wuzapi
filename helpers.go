@@ -283,7 +283,11 @@ func callHookWithHmac(myurl string, payload map[string]string, userID string, en
 
 			// Generate HMAC signature if key exists
 			if len(encryptedHmacKey) > 0 && len(jsonBody) > 0 {
-				hmacSignature, _ = generateHmacSignature(jsonBody, encryptedHmacKey)
+				var err error
+				hmacSignature, err = generateHmacSignature(jsonBody, encryptedHmacKey)
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to generate HMAC signature")
+				}
 			}
 
 			req = client.R().SetHeader("Content-Type", "application/json").SetBody(body)
@@ -296,7 +300,11 @@ func callHookWithHmac(myurl string, payload map[string]string, userID string, en
 					formData.Add(k, v)
 				}
 				formString := formData.Encode()
-				hmacSignature, _ = generateHmacSignature([]byte(formString), encryptedHmacKey)
+				var err error
+				hmacSignature, err = generateHmacSignature([]byte(formString), encryptedHmacKey)
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to generate HMAC signature")
+				}
 			}
 			req = client.R().SetFormData(payload)
 			body = payload
@@ -384,7 +392,7 @@ func callHookFileWithHmac(myurl string, payload map[string]string, userID string
 	}
 	finalPayload["file"] = file
 
-	// 2. Loop de Retry
+	// 2. Loop Retry
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			backoffFactor := 1 << uint(attempt-1)
@@ -404,9 +412,16 @@ func callHookFileWithHmac(myurl string, payload map[string]string, userID string
 		var jsonPayload []byte
 
 		if len(encryptedHmacKey) > 0 {
-
-			jsonPayload, _ = json.Marshal(finalPayload)
-			hmacSignature, _ = generateHmacSignature(jsonPayload, encryptedHmacKey)
+			var err error
+			jsonPayload, err = json.Marshal(finalPayload)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to marshal payload for HMAC")
+			} else {
+				hmacSignature, err = generateHmacSignature(jsonPayload, encryptedHmacKey)
+				if err != nil {
+					log.Error().Err(err).Msg("Failed to generate HMAC signature")
+				}
+			}
 		}
 
 		req := client.R().

@@ -1,3 +1,20 @@
+// Package main provides a JSON-RPC 2.0 server over stdin/stdout.
+//
+// This file implements a stdio-based JSON-RPC 2.0 interface that bridges
+// to the existing HTTP API handlers. It enables programmatic access to
+// wuzapi functionality through standard input/output, making it suitable
+// for use as a subprocess or in headless environments.
+//
+// The implementation:
+//   - Reads newline-delimited JSON-RPC 2.0 requests from stdin
+//   - Routes requests to existing HTTP handlers via httptest
+//   - Writes JSON-RPC 2.0 responses to stdout
+//   - Supports both notification and request/response patterns
+//
+// JSON-RPC methods map directly to HTTP endpoints (e.g., "user.login"
+// maps to POST /user/login). See JSON-RPC-API.md for available methods.
+//
+// Author: Alvaro Ramirez https://xenodium.com
 package main
 
 import (
@@ -12,20 +29,79 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// stdioRequest represents an incoming JSON request from stdin
-type stdioRequest struct {
-	ID     string                 `json:"id"`
+// ID represents a JSON-RPC 2.0 request/response identifier
+// It can be either a string or number per the spec
+type ID struct {
+	Num      uint64
+	Str      string
+	IsString bool // true if ID is a string, false if numeric
+	IsSet    bool // true if ID was present in JSON (not omitted)
+}
+
+// MarshalJSON implements json.Marshaler
+func (id ID) MarshalJSON() ([]byte, error) {
+	if id.IsString {
+		return json.Marshal(id.Str)
+	}
+	return json.Marshal(id.Num)
+}
+
+// UnmarshalJSON implements json.Unmarshaler
+func (id *ID) UnmarshalJSON(data []byte) error {
+	// Try numeric first
+	var num uint64
+	if err := json.Unmarshal(data, &num); err == nil {
+		*id = ID{Num: num, IsString: false, IsSet: true}
+		return nil
+	}
+	// Fall back to string
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	*id = ID{Str: str, IsString: true, IsSet: true}
+	return nil
+}
+
+// String returns the ID as a string for logging/display
+func (id ID) String() string {
+	if id.IsString {
+		return id.Str
+	}
+	return fmt.Sprintf("%d", id.Num)
+}
+
+// jsonRpcRequest represents an incoming JSON request from stdin
+type jsonRpcRequest struct {
+	ID     ID                     `json:"id"`
 	Method string                 `json:"method"`
 	Params map[string]interface{} `json:"params,omitempty"`
 }
 
-// stdioResponse represents an outgoing JSON response to stdout
-type stdioResponse struct {
-	ID      string      `json:"id"`
-	Success bool        `json:"success"`
-	Code    int         `json:"code"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
+// jsonRpcResponse represents an outgoing JSON response to stdout
+// Follows JSON-RPC 2.0 specification
+type jsonRpcResponse struct {
+	JSONRPC string      `json:"jsonrpc"`
+	ID      ID          `json:"id"`
+	Result  *jsonResult `json:"result,omitempty"`
+	Error   *rpcError   `json:"error,omitempty"`
+}
+
+// jsonResult wraps the result value so we can distinguish between
+// "no result" (nil pointer, omitted) and "null result" (pointer to nil)
+type jsonResult struct {
+	Value interface{}
+}
+
+// MarshalJSON makes jsonResult marshal as its wrapped value
+func (r *jsonResult) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Value)
+}
+
+// rpcError represents a JSON-RPC 2.0 error object
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 // stdioServer handles stdin/stdout JSON-based API by wrapping HTTP handlers
@@ -81,13 +157,14 @@ func (ss *stdioServer) Start() error {
 }
 
 func (ss *stdioServer) handleRequest(requestBytes []byte) {
-	var req stdioRequest
+	var req jsonRpcRequest
 	if err := json.Unmarshal(requestBytes, &req); err != nil {
-		ss.sendError("", 400, fmt.Sprintf("invalid JSON request: %v", err))
+		ss.sendError(ID{}, 400, fmt.Sprintf("invalid JSON request: %v", err))
 		return
 	}
-	if req.ID == "" {
-		ss.sendError("", 400, "missing request id")
+	// ID is required - check if it was present in the JSON
+	if !req.ID.IsSet {
+		ss.sendError(ID{}, 400, "missing request id")
 		return
 	}
 	if req.Method == "" {
@@ -95,14 +172,14 @@ func (ss *stdioServer) handleRequest(requestBytes []byte) {
 		return
 	}
 	log.Info().
-		Str("id", req.ID).
+		Str("id", req.ID.String()).
 		Str("method", req.Method).
 		Msg("Processing stdio request")
 	ss.routeRequest(&req)
 }
 
 // routeRequest dispatches the request to the appropriate HTTP handler
-func (ss *stdioServer) routeRequest(req *stdioRequest) {
+func (ss *stdioServer) routeRequest(req *jsonRpcRequest) {
 	// Map stdio method to HTTP route and method
 	var httpMethod, httpPath string
 
@@ -110,6 +187,91 @@ func (ss *stdioServer) routeRequest(req *stdioRequest) {
 	case "health":
 		httpMethod = "GET"
 		httpPath = "/health"
+
+	// Admin user management
+	case "admin.users.add":
+		httpMethod = "POST"
+		httpPath = "/admin/users"
+	case "admin.users.list":
+		httpMethod = "GET"
+		httpPath = "/admin/users"
+	case "admin.users.get":
+		httpMethod = "GET"
+		// Extract userId from params
+		userId, ok := req.Params["userId"].(string)
+		if !ok || userId == "" {
+			ss.sendError(req.ID, 400, "missing or invalid userId parameter")
+			return
+		}
+		httpPath = "/admin/users/" + userId
+	case "admin.users.delete":
+		httpMethod = "DELETE"
+		// Extract userId from params
+		userId, ok := req.Params["userId"].(string)
+		if !ok || userId == "" {
+			ss.sendError(req.ID, 400, "missing or invalid userId parameter")
+			return
+		}
+		httpPath = "/admin/users/" + userId
+
+	// Session management
+	case "session.connect":
+		httpMethod = "POST"
+		httpPath = "/session/connect"
+	case "session.qr":
+		httpMethod = "GET"
+		httpPath = "/session/qr"
+	case "session.status":
+		httpMethod = "GET"
+		httpPath = "/session/status"
+	case "session.disconnect":
+		httpMethod = "POST"
+		httpPath = "/session/disconnect"
+	case "session.logout":
+		httpMethod = "POST"
+		httpPath = "/session/logout"
+
+	// Messaging
+	case "chat.send.text":
+		httpMethod = "POST"
+		httpPath = "/chat/send/text"
+	case "chat.history":
+		httpMethod = "GET"
+		chatJID, ok := req.Params["chat_jid"].(string)
+		if !ok || chatJID == "" {
+			ss.sendError(req.ID, 400, "missing or invalid chat_jid parameter")
+			return
+		}
+		httpPath = "/chat/history?chat_jid=" + chatJID
+		// Add optional limit parameter
+		if limit, ok := req.Params["limit"].(float64); ok {
+			httpPath += fmt.Sprintf("&limit=%d", int(limit))
+		}
+
+	// User info
+	case "user.contacts":
+		httpMethod = "GET"
+		httpPath = "/user/contacts"
+
+	// Group management
+	case "group.list":
+		httpMethod = "GET"
+		httpPath = "/group/list"
+
+	// Webhook management
+	case "webhook.get":
+		httpMethod = "GET"
+		httpPath = "/webhook"
+	case "webhook.set":
+		httpMethod = "POST"
+		httpPath = "/webhook"
+	case "webhook.update":
+		httpMethod = "PUT"
+		httpPath = "/webhook"
+	case "webhook.delete":
+		httpMethod = "DELETE"
+		httpPath = "/webhook"
+
 	default:
 		ss.sendError(req.ID, 404, fmt.Sprintf("unknown method: %s", req.Method))
 		return
@@ -118,7 +280,7 @@ func (ss *stdioServer) routeRequest(req *stdioRequest) {
 }
 
 // executeHTTPHandler wraps the existing HTTP handler and adapts it for stdio
-func (ss *stdioServer) executeHTTPHandler(req *stdioRequest, httpMethod, httpPath string) {
+func (ss *stdioServer) executeHTTPHandler(req *jsonRpcRequest, httpMethod, httpPath string) {
 	// Create a mock HTTP request
 	var body io.Reader
 	if req.Params != nil && len(req.Params) > 0 {
@@ -148,7 +310,7 @@ func (ss *stdioServer) executeHTTPHandler(req *stdioRequest, httpMethod, httpPat
 }
 
 // convertHTTPResponse converts an HTTP response to a stdio response
-func (ss *stdioServer) convertHTTPResponse(requestID string, recorder *httptest.ResponseRecorder) {
+func (ss *stdioServer) convertHTTPResponse(requestID ID, recorder *httptest.ResponseRecorder) {
 	statusCode := recorder.Code
 	responseBody := recorder.Body.Bytes()
 
@@ -190,36 +352,39 @@ func (ss *stdioServer) convertHTTPResponse(requestID string, recorder *httptest.
 	}
 }
 
-func (ss *stdioServer) sendSuccess(id string, code int, data interface{}) {
-	response := stdioResponse{
+func (ss *stdioServer) sendSuccess(id ID, code int, data interface{}) {
+	response := jsonRpcResponse{
+		JSONRPC: "2.0",
 		ID:      id,
-		Success: true,
-		Code:    code,
-		Data:    data,
+		Result:  &jsonResult{Value: data},
 	}
 	ss.writeResponse(response)
 }
 
-func (ss *stdioServer) sendError(id string, code int, errorMsg string) {
-	response := stdioResponse{
+func (ss *stdioServer) sendError(id ID, code int, errorMsg string) {
+	response := jsonRpcResponse{
+		JSONRPC: "2.0",
 		ID:      id,
-		Success: false,
-		Code:    code,
-		Error:   errorMsg,
+		Error: &rpcError{
+			Code:    code,
+			Message: errorMsg,
+		},
 	}
 	ss.writeResponse(response)
 }
 
-func (ss *stdioServer) writeResponse(response stdioResponse) {
+func (ss *stdioServer) writeResponse(response jsonRpcResponse) {
 	// Marshalled response as single line
 	responseBytes, err := json.Marshal(response)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to marshal response")
-		fallback := stdioResponse{
+		fallback := jsonRpcResponse{
+			JSONRPC: "2.0",
 			ID:      response.ID,
-			Success: false,
-			Code:    500,
-			Error:   "internal error: failed to marshal response",
+			Error: &rpcError{
+				Code:    -32603,
+				Message: "Internal error: failed to marshal response",
+			},
 		}
 		responseBytes, err = json.Marshal(fallback)
 		if err != nil {
@@ -231,9 +396,46 @@ func (ss *stdioServer) writeResponse(response stdioResponse) {
 	// Write to stdout with newline
 	fmt.Fprintf(ss.stdout, "%s\n", string(responseBytes))
 
+	// Log with appropriate fields based on response type
+	logEvent := log.Debug().Str("id", response.ID.String())
+	if response.Error != nil {
+		logEvent.Bool("success", false).Int("code", response.Error.Code).Str("error", response.Error.Message)
+	} else {
+		logEvent.Bool("success", true)
+	}
+	logEvent.Msg("Sent stdio response")
+}
+
+// jsonRpcNotification represents a one-way notification (no id, no response expected)
+// Follows JSON-RPC 2.0 specification
+type jsonRpcNotification struct {
+	JSONRPC string                 `json:"jsonrpc"`
+	Method  string                 `json:"method"`
+	Params  map[string]interface{} `json:"params,omitempty"`
+}
+
+// SendNotification sends a JSON-RPC notification to stdout (webhooks in stdio mode)
+// This is thread-safe - os.Stdout writes are atomic at the OS level
+func (s *server) SendNotification(method string, params map[string]interface{}) {
+	if s.mode != Stdio {
+		return
+	}
+
+	notification := jsonRpcNotification{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	}
+
+	notificationBytes, err := json.Marshal(notification)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to marshal notification")
+		return
+	}
+
+	fmt.Fprintf(os.Stdout, "%s\n", string(notificationBytes))
+
 	log.Debug().
-		Str("id", response.ID).
-		Bool("success", response.Success).
-		Int("code", response.Code).
-		Msg("Sent stdio response")
+		Str("method", method).
+		Msg("Sent stdio notification")
 }

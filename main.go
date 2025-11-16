@@ -27,10 +27,19 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// ServerMode represents the server operating mode
+type ServerMode int
+
+const (
+	HTTP ServerMode = iota
+	Stdio
+)
+
 type server struct {
 	db     *sqlx.DB
 	router *mux.Router
 	exPath string
+	mode   ServerMode
 }
 
 // Replace the global variables
@@ -355,16 +364,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	serverMode := HTTP
+	if *mode == "stdio" {
+		serverMode = Stdio
+	}
+
 	s := &server{
 		router: mux.NewRouter(),
 		db:     db,
 		exPath: exPath,
+		mode:   serverMode,
 	}
 	s.routes()
 
 	s.connectOnStartup()
 
-	if *mode == "stdio" {
+	if serverMode == Stdio {
 		startStdioMode(s)
 	} else {
 		startHTTPMode(s)

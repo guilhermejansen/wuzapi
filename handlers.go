@@ -4675,7 +4675,7 @@ func (s *server) AddUser() http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 			s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"code":    http.StatusBadRequest,
-				"error":   "invalid request payload",
+				"error":   err.Error(),
 				"success": false,
 			})
 			return
@@ -4869,7 +4869,7 @@ func (s *server) EditUser() http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 			s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"code":    http.StatusBadRequest,
-				"error":   "invalid request payload",
+				"error":   err.Error(),
 				"success": false,
 			})
 			return

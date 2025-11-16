@@ -22,8 +22,12 @@ func (s *server) routes() {
 	exPath := filepath.Dir(ex)
 
 	var routerLog zerolog.Logger
+	logOutput := os.Stdout
+	if s.mode == Stdio {
+		logOutput = os.Stderr
+	}
 	if *logType == "json" {
-		routerLog = zerolog.New(os.Stdout).
+		routerLog = zerolog.New(logOutput).
 			With().
 			Timestamp().
 			Str("role", filepath.Base(os.Args[0])).
@@ -31,7 +35,7 @@ func (s *server) routes() {
 			Logger()
 	} else {
 		output := zerolog.ConsoleWriter{
-			Out:        os.Stdout,
+			Out:        logOutput,
 			TimeFormat: time.RFC3339,
 			NoColor:    !*colorOutput,
 		}

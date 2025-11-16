@@ -40,6 +40,9 @@ type ID struct {
 
 // MarshalJSON implements json.Marshaler
 func (id ID) MarshalJSON() ([]byte, error) {
+	if !id.IsSet {
+		return []byte("null"), nil
+	}
 	if id.IsString {
 		return json.Marshal(id.Str)
 	}
@@ -179,6 +182,16 @@ func (ss *stdioServer) handleRequest(requestBytes []byte) {
 }
 
 // routeRequest dispatches the request to the appropriate HTTP handler
+// getUserIdParam extracts and validates userId from request params
+func (ss *stdioServer) getUserIdParam(req *jsonRpcRequest) (string, bool) {
+	userId, ok := req.Params["userId"].(string)
+	if !ok || userId == "" {
+		ss.sendError(req.ID, 400, "missing or invalid userId parameter")
+		return "", false
+	}
+	return userId, true
+}
+
 func (ss *stdioServer) routeRequest(req *jsonRpcRequest) {
 	// Map stdio method to HTTP route and method
 	var httpMethod, httpPath string
@@ -197,19 +210,17 @@ func (ss *stdioServer) routeRequest(req *jsonRpcRequest) {
 		httpPath = "/admin/users"
 	case "admin.users.get":
 		httpMethod = "GET"
-		// Extract userId from params
-		userId, ok := req.Params["userId"].(string)
-		if !ok || userId == "" {
-			ss.sendError(req.ID, 400, "missing or invalid userId parameter")
+		userId, ok := ss.getUserIdParam(req)
+		if !ok {
+			// Error sent by getUserIdParam.
 			return
 		}
 		httpPath = "/admin/users/" + userId
 	case "admin.users.delete":
 		httpMethod = "DELETE"
-		// Extract userId from params
-		userId, ok := req.Params["userId"].(string)
-		if !ok || userId == "" {
-			ss.sendError(req.ID, 400, "missing or invalid userId parameter")
+		userId, ok := ss.getUserIdParam(req)
+		if !ok {
+			// Error sent by getUserIdParam.
 			return
 		}
 		httpPath = "/admin/users/" + userId

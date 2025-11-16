@@ -689,6 +689,95 @@ func TestNumericZeroRequestID(t *testing.T) {
 	}
 }
 
+func TestParseErrorReturnsNullID(t *testing.T) {
+	s := makeTestServer(t)
+
+	// Send invalid JSON to trigger parse error
+	request := `{invalid json`
+	response := executeRequest(t, s, request)
+
+	expected := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      nil, // null ID for parse errors
+	}
+
+	if diff := compareJSON(expected, response); diff != "" {
+		t.Errorf("Response mismatch:\n%s", diff)
+	}
+
+	// Verify it's an error response (has error, no result)
+	if response["error"] == nil {
+		t.Errorf("Expected error field for parse error, got nil")
+	}
+	if response["result"] != nil {
+		t.Errorf("Expected no result for parse error, got: %v", response["result"])
+	}
+}
+
+func TestMissingUserIdParam(t *testing.T) {
+	s := makeTestServer(t)
+
+	// Test admin.users.get without userId parameter
+	request := newRequest("1", "admin.users.get", map[string]interface{}{
+		"adminToken": "test-admin-token",
+		// userId missing
+	}).toJSON(t)
+	response := executeRequest(t, s, request)
+
+	expected := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "1",
+		"error": map[string]interface{}{
+			"code":    float64(400),
+			"message": "missing or invalid userId parameter",
+		},
+	}
+
+	if diff := compareJSON(expected, response); diff != "" {
+		t.Errorf("Response mismatch:\n%s", diff)
+	}
+
+	// Verify it's an error response (has error, no result)
+	if response["error"] == nil {
+		t.Errorf("Expected error field, got nil")
+	}
+	if response["result"] != nil {
+		t.Errorf("Expected no result for error, got: %v", response["result"])
+	}
+}
+
+func TestInvalidUserIdParamType(t *testing.T) {
+	s := makeTestServer(t)
+
+	// Test with invalid userId type (number instead of string)
+	request := newRequest("1", "admin.users.get", map[string]interface{}{
+		"adminToken": "test-admin-token",
+		"userId":     12345, // number instead of string
+	}).toJSON(t)
+	response := executeRequest(t, s, request)
+
+	expected := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "1",
+		"error": map[string]interface{}{
+			"code":    float64(400),
+			"message": "missing or invalid userId parameter",
+		},
+	}
+
+	if diff := compareJSON(expected, response); diff != "" {
+		t.Errorf("Response mismatch:\n%s", diff)
+	}
+
+	// Verify it's an error response (has error, no result)
+	if response["error"] == nil {
+		t.Errorf("Expected error field, got nil")
+	}
+	if response["result"] != nil {
+		t.Errorf("Expected no result for error, got: %v", response["result"])
+	}
+}
+
 func TestStringRequestID(t *testing.T) {
 	s := makeTestServer(t)
 

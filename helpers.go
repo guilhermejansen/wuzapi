@@ -481,7 +481,6 @@ func callHookFileWithHmac(myurl string, payload map[string]string, userID string
 
 		PublishFileErrorToQueue(errorPayload)
 
-		log.Error().Str("queue", *webhookErrorQueueName).Msg("Payload sent to RabbitMQ error queue (requires implementation)")
 		return fmt.Errorf("webhook failed permanently: %w", lastError)
 	}
 

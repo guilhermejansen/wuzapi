@@ -1270,7 +1270,7 @@ paths:
       tags:
         - Chat 
       summary: Sends a sticker message
-      description: Sends a sticker message (must be base64 encoded in image/webp format)
+      description: Sends a sticker message (must be base64 encoded in image/webp or video/mp4 format)
       security:
         - ApiKeyAuth: []
       requestBody:
@@ -2527,10 +2527,26 @@ definitions:
       PngThumbnail:
         type: string
         example: "AA00D010"
+      MimeType:
+        type: string
+        example: "image/webp"
+      PackId:
+        type: string
+        example: "my.sticker.pack.id"
+      PackName:
+        type: string
+        example: "My Pack"
+      PackPublisher:
+        type: string
+        example: "Wuzapi"
+      Emojis:
+        type: array
+        items:
+          type: string
+        example: ["😀", "🎉"]
       ContextInfo:
         $ref: "#/definitions/ContextInfo"
- 
-
+        description: "Optional context info for replies, mentions, and forwarding"
   MessageDocument:
     type: object
     required: 

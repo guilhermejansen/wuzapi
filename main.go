@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,6 +53,11 @@ var (
 	mode                = flag.String("mode", "http", "Server mode: http or stdio")
 
 	globalHMACKeyEncrypted []byte
+
+	webhookRetryEnabled      = flag.Bool("webhookretry", true, "Enable webhook retry mechanism")
+	webhookRetryCount        = flag.Int("retrycount", 5, "Number of times to retry failed webhooks")
+	webhookRetryDelaySeconds = flag.Int("retrydelay", 30, "Delay in seconds between webhook retries")
+	webhookErrorQueueName    = flag.String("errorqueue", "webhook_errors", "RabbitMQ queue name for failed webhooks")
 
 	container        *sqlstore.Container
 	clientManager    = NewClientManager()
@@ -163,6 +169,30 @@ func main() {
 	}
 
 	flag.Parse()
+
+	if v := os.Getenv("WEBHOOK_RETRY_ENABLED"); v != "" {
+		*webhookRetryEnabled = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv("WEBHOOK_RETRY_COUNT"); v != "" {
+		if count, err := strconv.Atoi(v); err == nil {
+			*webhookRetryCount = count
+		}
+	}
+	if v := os.Getenv("WEBHOOK_RETRY_DELAY_SECONDS"); v != "" {
+		if delay, err := strconv.Atoi(v); err == nil {
+			*webhookRetryDelaySeconds = delay
+		}
+	}
+	if v := os.Getenv("WEBHOOK_ERROR_QUEUE_NAME"); v != "" {
+		*webhookErrorQueueName = v
+	}
+
+	log.Info().
+		Bool("enabled", *webhookRetryEnabled).
+		Int("count", *webhookRetryCount).
+		Int("delay", *webhookRetryDelaySeconds).
+		Str("queue", *webhookErrorQueueName).
+		Msg("Webhook Retry Configured")
 
 	// Novo bloco para sobrescrever o osName pelo ENV, se existir
 	if v := os.Getenv("SESSION_DEVICE_NAME"); v != "" {

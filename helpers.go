@@ -622,7 +622,20 @@ func convertVideoStickerToWebP(input []byte) ([]byte, error) {
 
 	qValue := 10
 	filter := "fps=15,scale=512:512:force_original_aspect_ratio=increase,crop=512:512"
-	cmd := exec.Command("bash", "-c", fmt.Sprintf("ffmpeg -y -t 10 -i %s -vf '%s' -loop 0 -an -vsync 0 -fs 1000000 -c:v libwebp -qscale:v %d %s", inFile.Name(), filter, qValue, outPath))
+	cmd := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-t", "10",
+		"-i", inFile.Name(),
+		"-vf", filter,
+		"-loop", "0",
+		"-an",
+		"-vsync", "0",
+		"-fs", "1000000",
+		"-c:v", "libwebp",
+		"-qscale:v", fmt.Sprintf("%d", qValue),
+		outPath,
+	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

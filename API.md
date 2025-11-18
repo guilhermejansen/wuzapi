@@ -761,15 +761,38 @@ curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"
 
 ## Send Sticker Message
 
-Sends a Sticker message. Sticker must be in image/webp format and base64 encoded in embedded format. You can optionally specify a PngThumbnail
+Sends a Sticker message. The API accepts:
+- **Static stickers**: `image/webp`
+- **Animated stickers**: `video/mp4`
+
+The sticker data must be base64 encoded in data URI format (e.g., `data:image/webp;base64,...`).
 
 Endpoint: _/chat/send/sticker_
 
 Method: **POST**
 
 
+Static WebP sticker:
 ```
-curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","PngThumbnail":"VBORgoAANSU=", "Sticker":"data:image/jpeg;base64,iVBORw0KGgoAAAANSU..."}' http://localhost:8080/chat/send/sticker
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","Sticker":"data:image/webp;base64,iVBORw0KGgoAAAANSU..."}' http://localhost:8080/chat/send/sticker
+```
+
+Static WebP sticker with pack metadata:
+```
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{
+  "Phone":"5491155554444",
+  "Sticker":"data:image/webp;base64,iVBORw0KGgoAAAANSU...",
+  "PackId":"com.example.my.pack",
+  "PackName":"My Pack",
+  "PackPublisher":"Wuzapi",
+  "Emojis":["😂","😍","👍","🎉"],
+  "PngThumbnail":"data:image/png;base64,iVBORw0KGgoAAAANSU..."
+}' http://localhost:8080/chat/send/sticker
+```
+
+Animated sticker:
+```
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","Sticker":"data:video/mp4;base64,AAAAIGZ0eXBpc29t..."}' http://localhost:8080/chat/send/sticker
 ```
 
 

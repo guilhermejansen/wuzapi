@@ -718,7 +718,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"Sticker\": \"data:image/webp;base64,/9j/\"\n}"
+              "raw": "{\n  \"Phone\": \"5491155553935\",\n  \"PackName\": \"My Pack\",\n  \"PackPublisher\": \"Wuzapi\",\n  \"Emojis\": [\"😂\", \"😍\", \"👍\", \"🎉\"],\n  \"Sticker\": \"data:image/webp;base64,/9j/\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/chat/send/sticker",

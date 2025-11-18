@@ -1286,12 +1286,16 @@ func (s *server) SendImage() http.HandlerFunc {
 func (s *server) SendSticker() http.HandlerFunc {
 
 	type stickerStruct struct {
-		Phone        string
-		Sticker      string
-		Id           string
-		PngThumbnail []byte
-		MimeType     string
-		ContextInfo  waE2E.ContextInfo
+		Phone         string
+		Sticker       string
+		Id            string
+		PngThumbnail  []byte
+		MimeType      string
+		PackId        string
+		PackName      string
+		PackPublisher string
+		Emojis        []string
+		ContextInfo   waE2E.ContextInfo
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1336,40 +1340,38 @@ func (s *server) SendSticker() http.HandlerFunc {
 			msgid = t.Id
 		}
 
-		var uploaded whatsmeow.UploadResponse
-		var filedata []byte
-
-		if t.Sticker[0:4] == "data" {
-			var dataURL, err = dataurl.DecodeString(t.Sticker)
-			if err != nil {
-				s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode base64 encoded data from payload"))
-				return
-			} else {
-				filedata = dataURL.Data
-				uploaded, err = clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), filedata, whatsmeow.MediaImage)
-				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to upload file: %v", err)))
-					return
-				}
+		processedData, detectedMimeType, err := processStickerData(
+			t.Sticker,
+			t.MimeType,
+			t.PackId,
+			t.PackName,
+			t.PackPublisher,
+			t.Emojis,
+		)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to process sticker data")
+			status := http.StatusBadRequest
+			if strings.Contains(err.Error(), "failed to convert video sticker") {
+				status = http.StatusInternalServerError
 			}
-		} else {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("Data should start with \"data:mime/type;base64,\""))
+			s.Respond(w, r, status, errors.New(err.Error()))
+			return
+		}
+
+		uploaded, err := clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), processedData, whatsmeow.MediaImage)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to upload file: %v", err)))
 			return
 		}
 
 		msg := &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
-			URL:        proto.String(uploaded.URL),
-			DirectPath: proto.String(uploaded.DirectPath),
-			MediaKey:   uploaded.MediaKey,
-			Mimetype: proto.String(func() string {
-				if t.MimeType != "" {
-					return t.MimeType
-				}
-				return http.DetectContentType(filedata)
-			}()),
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(detectedMimeType),
 			FileEncSHA256: uploaded.FileEncSHA256,
 			FileSHA256:    uploaded.FileSHA256,
-			FileLength:    proto.Uint64(uint64(len(filedata))),
+			FileLength:    proto.Uint64(uint64(len(processedData))),
 			PngThumbnail:  t.PngThumbnail,
 		}}
 
@@ -6229,7 +6231,7 @@ func (s *server) ArchiveChat() http.HandlerFunc {
 
 	type requestArchiveStruct struct {
 		Jid     string `json:"jid"`
-		Archive bool   `json:archive`
+		Archive bool   `json:"archive"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {

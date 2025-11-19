@@ -710,7 +710,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 		// Check if automatic history sync is enabled and trigger it after QR code is scanned
 		var daysToSyncHistory int
-		err = mycli.db.Get(&daysToSyncHistory, "SELECT COALESCE(days_to_sync_history, 0) FROM users WHERE id=$1", mycli.userID)
+		query := "SELECT COALESCE(days_to_sync_history, 0) FROM users WHERE id=$1"
+		query = mycli.db.Rebind(query)
+		err = mycli.db.Get(&daysToSyncHistory, query, mycli.userID)
 		if err != nil {
 			log.Warn().Err(err).Str("userID", mycli.userID).Msg("Failed to get days_to_sync_history from database")
 		} else if daysToSyncHistory > 0 {
@@ -742,7 +744,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 				// Get all contacts
 				contacts, err := mycli.WAClient.Store.Contacts.GetAllContacts(ctx)
-				if err == nil {
+				if err != nil {
+					log.Error().Err(err).Str("userID", mycli.userID).Msg("Failed to get contacts for history sync")
+				} else {
 					for jid := range contacts {
 						chatJIDs = append(chatJIDs, jid.String())
 					}
@@ -750,7 +754,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 
 				// Get all groups
 				groups, err := mycli.WAClient.GetJoinedGroups(ctx)
-				if err == nil {
+				if err != nil {
+					log.Error().Err(err).Str("userID", mycli.userID).Msg("Failed to get groups for history sync")
+				} else {
 					for _, group := range groups {
 						chatJIDs = append(chatJIDs, group.JID.String())
 					}
@@ -1580,12 +1586,23 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						var senderJIDForInfo types.JID
 						if isFromMe {
 							if accountOwnerJID != "" {
-								senderJIDForInfo, _ = types.ParseJID(accountOwnerJID)
+								var pErr error
+								senderJIDForInfo, pErr = types.ParseJID(accountOwnerJID)
+								if pErr != nil {
+									log.Warn().Err(pErr).Str("accountOwnerJID", accountOwnerJID).Msg("Failed to parse account owner JID in HistorySync")
+								}
 							}
 						} else {
 							if chatJID.Server == types.GroupServer || chatJID.Server == types.BroadcastServer {
 								// Group: use participant JID
-								senderJIDForInfo, _ = types.ParseJID(messageKey.GetParticipant())
+								participant := messageKey.GetParticipant()
+								if participant != "" {
+									var pErr error
+									senderJIDForInfo, pErr = types.ParseJID(participant)
+									if pErr != nil {
+										log.Warn().Err(pErr).Str("participantJID", participant).Msg("Failed to parse participant JID in HistorySync")
+									}
+								}
 							} else {
 								// Direct message: sender is the chat
 								senderJIDForInfo = chatJID

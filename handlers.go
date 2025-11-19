@@ -5915,6 +5915,10 @@ func (s *server) syncHistoryForChat(ctx context.Context, userID string, chatJID 
 
 	var lastMessageInfo *types.MessageInfo
 	err := s.db.Get(&lastMsg, query, userID, chatJIDStr)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to get last message from history: %w", err)
+	}
+
 	if err == nil && lastMsg.MessageID != "" {
 		// Parse sender JID
 		var senderJID types.JID

@@ -1542,6 +1542,12 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 						} else if list := message.GetListResponseMessage(); list != nil {
 							messageType = "list_response"
 							textContent = list.GetSingleSelectReply().GetSelectedRowID()
+						} else if reaction := message.GetReactionMessage(); reaction != nil {
+							messageType = "reaction"
+							textContent = reaction.GetText()
+							if key := reaction.GetKey(); key != nil {
+								quotedMessageID = key.GetId()
+							}
 						}
 
 						// Set default text for media messages without captions

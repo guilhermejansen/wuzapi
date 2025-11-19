@@ -734,19 +734,13 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					count = 50 // Minimum reasonable count
 				}
 
-				// Get ignore_groups setting
-				var ignoreGroups bool
-				err = mycli.db.Get(&ignoreGroups, "SELECT COALESCE(ignore_groups, true) FROM users WHERE id=$1", mycli.userID)
-				if err != nil {
-					log.Warn().Err(err).Str("userID", mycli.userID).Msg("Failed to get ignore_groups setting, defaulting to true")
-					ignoreGroups = true
-				}
-
-				// Get chats from WhatsApp (contacts and optionally groups)
+				// Get chats from WhatsApp (contacts and groups)
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 
 				var chatJIDs []string
+
+				// Get all contacts
 				contacts, err := mycli.WAClient.Store.Contacts.GetAllContacts(ctx)
 				if err == nil {
 					for jid := range contacts {
@@ -754,27 +748,12 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					}
 				}
 
-				// Only get groups if ignore_groups is false
-				if !ignoreGroups {
-					groups, err := mycli.WAClient.GetJoinedGroups(ctx)
-					if err == nil {
-						for _, group := range groups {
-							chatJIDs = append(chatJIDs, group.JID.String())
-						}
+				// Get all groups
+				groups, err := mycli.WAClient.GetJoinedGroups(ctx)
+				if err == nil {
+					for _, group := range groups {
+						chatJIDs = append(chatJIDs, group.JID.String())
 					}
-				} else {
-					// Filter out groups if ignore_groups is true
-					filteredChatJIDs := []string{}
-					for _, chatJIDStr := range chatJIDs {
-						chatJID, err := types.ParseJID(chatJIDStr)
-						if err != nil {
-							continue
-						}
-						if chatJID.Server != types.GroupServer && chatJID.Server != types.BroadcastServer {
-							filteredChatJIDs = append(filteredChatJIDs, chatJIDStr)
-						}
-					}
-					chatJIDs = filteredChatJIDs
 				}
 
 				// Sync each chat with a small delay between requests
@@ -786,7 +765,6 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 					}
 
 					// Use the syncHistoryForChat function from handlers.go
-					// We need to call it through the server instance
 					err = mycli.s.syncHistoryForChat(context.Background(), mycli.userID, chatJID, count)
 					if err != nil {
 						log.Warn().Err(err).Str("chatJID", chatJIDStr).Msg("Failed to sync history for chat")

@@ -5919,7 +5919,12 @@ func (s *server) syncHistoryForChat(ctx context.Context, userID string, chatJID 
 		// Parse sender JID
 		var senderJID types.JID
 		if lastMsg.SenderJID != "" && lastMsg.SenderJID != "me" {
-			senderJID, _ = types.ParseJID(lastMsg.SenderJID)
+			var pErr error
+			senderJID, pErr = types.ParseJID(lastMsg.SenderJID)
+			if pErr != nil {
+				log.Warn().Err(pErr).Str("senderJID", lastMsg.SenderJID).Msg("Failed to parse sender JID from history, using empty JID")
+				senderJID = types.EmptyJID
+			}
 		} else {
 			senderJID = types.EmptyJID
 		}

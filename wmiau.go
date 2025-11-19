@@ -1474,8 +1474,9 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 							// Message from account owner
 							senderJID = accountOwnerJID
 							if senderJID == "" {
-								// Fallback: use chat JID if account owner JID is not available
-								senderJID = chatJID.String()
+								// Fallback: use "me" if account owner JID is not available
+								senderJID = "me"
+								log.Warn().Str("messageID", messageID).Msg("accountOwnerJID is not available for a message from me, using 'me' as senderJID")
 							}
 						} else {
 							// Message from someone else

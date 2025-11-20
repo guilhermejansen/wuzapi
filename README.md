@@ -50,6 +50,18 @@ When HMAC is configured, all webhooks include an `x-hmac-signature` header with 
 **Optional:**
 * Docker (for containerization)
 
+## Installation
+
+### Using Homebrew (macOS/Linux)
+
+There's a [Homebrew](https://brew.sh) recipe over at [github.com/xenodium/homebrew-wuzapi](https://github.com/xenodium/homebrew-wuzapi).
+
+To install `wuzapi`, use:
+
+```bash
+brew install xenodium/wuzapi/wuzapi
+```
+
 ## Updating dependencies
 
 This project uses the whatsmeow library to communicate with WhatsApp. To update the library to the latest version, run:

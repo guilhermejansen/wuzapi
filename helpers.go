@@ -774,6 +774,53 @@ func convertVideoStickerToWebP(input []byte) ([]byte, error) {
 	return data, nil
 }
 
+func convertImageToWebP(input []byte) ([]byte, error) {
+	inFile, err := os.CreateTemp("", "sticker-input-*.img")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(inFile.Name())
+	defer inFile.Close()
+
+	if _, err := inFile.Write(input); err != nil {
+		return nil, err
+	}
+
+	outFile, err := os.CreateTemp("", "sticker-output-*.webp")
+	if err != nil {
+		return nil, err
+	}
+	outPath := outFile.Name()
+	outFile.Close()
+	defer os.Remove(outPath)
+
+	filter := "scale=512:512:force_original_aspect_ratio=increase,crop=512:512"
+
+	cmd := exec.Command(
+		"ffmpeg",
+		"-y",
+		"-i", inFile.Name(),
+		"-vf", filter,
+		"-c:v", "libwebp",
+		"-lossless", "1",
+		outPath,
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		log.Error().Err(err).Str("stderr", stderr.String()).Msg("ffmpeg failed converting image sticker")
+		return nil, err
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 func processStickerData(stickerData string, mimeOverride string, packID, packName, packPublisher string, emojis []string) ([]byte, string, error) {
 	if !strings.HasPrefix(stickerData, "data") {
 		return nil, "", fmt.Errorf("data should start with \"data:mime/type;base64,\"")
@@ -791,11 +838,18 @@ func processStickerData(stickerData string, mimeOverride string, packID, packNam
 		detectedMimeType = mimeOverride
 	}
 
-	// If this is a video sticker, convert to animated WebP
-	if strings.HasPrefix(detectedMimeType, "video/") {
+	// If this is a video sticker or GIF, convert to animated WebP
+	if strings.HasPrefix(detectedMimeType, "video/") || detectedMimeType == "image/gif" {
 		converted, err := convertVideoStickerToWebP(filedata)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to convert video sticker to webp: %w", err)
+			return nil, "", fmt.Errorf("failed to convert video/gif sticker to webp: %w", err)
+		}
+		filedata = converted
+		detectedMimeType = "image/webp"
+	} else if detectedMimeType == "image/jpeg" || detectedMimeType == "image/png" {
+		converted, err := convertImageToWebP(filedata)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to convert image sticker to webp: %w", err)
 		}
 		filedata = converted
 		detectedMimeType = "image/webp"
@@ -859,6 +913,11 @@ func injectWebPExifChunk(in []byte, exif []byte) ([]byte, error) {
 		return nil, fmt.Errorf("not a RIFF WEBP file")
 	}
 
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(in))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image config: %w", err)
+	}
+
 	var out bytes.Buffer
 	out.Grow(len(in) + len(exif) + 32)
 	out.WriteString("RIFF")
@@ -897,9 +956,28 @@ func injectWebPExifChunk(in []byte, exif []byte) ([]byte, error) {
 	if vp8xIndex >= 0 {
 		c := chunks[vp8xIndex]
 		if len(c) >= 18 {
-			c[8] = c[8] | 0x04
+			c[8] = c[8] | 0x08
 			chunks[vp8xIndex] = c
 		}
+	} else {
+		vp8x := make([]byte, 18)
+		copy(vp8x[0:4], []byte("VP8X"))
+		binary.LittleEndian.PutUint32(vp8x[4:8], 10)
+
+		vp8x[8] = 0x08
+
+		w := cfg.Width - 1
+		vp8x[12] = uint8(w)
+		vp8x[13] = uint8(w >> 8)
+		vp8x[14] = uint8(w >> 16)
+
+		h := cfg.Height - 1
+		vp8x[15] = uint8(h)
+		vp8x[16] = uint8(h >> 8)
+		vp8x[17] = uint8(h >> 16)
+
+		newChunks := append([][]byte{vp8x}, chunks...)
+		chunks = newChunks
 	}
 
 	for _, c := range chunks {

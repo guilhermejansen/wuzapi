@@ -1421,7 +1421,7 @@ paths:
       tags:
         - Chat
       summary: Downloads Sticker from message
-      description: Downloads an Sticker from a message and returns it Base64 media encoded
+      description: Downloads a Sticker from a message and returns it Base64 media encoded
       security:
         - ApiKeyAuth: []
       requestBody:
@@ -1437,16 +1437,7 @@ paths:
           content:
             application/json:
               schema:
-                example:
-                  {
-                    "code": 200,
-                    "data":
-                      {
-                        "Data": "data:image/webp;base64,iVBORw0KGgoA5CYII...=",
-                        "Mimetype": "image/webp",
-                      },
-                    "success": true,
-                  }
+                example: {"code":200,"data":{"Data":"data:image/webp;base64,iVBORw0KGgoA5CYII...=","Mimetype":"image/webp"},"success":true}
   /chat/downloadvideo:
     post:
       tags:

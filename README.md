@@ -67,12 +67,10 @@ go build .
 
 ## Homebrew installation
 
-There's a [Homebrew](https://brew.sh) recipe over at [github.com/xenodium/homebrew-wuzapi](https://github.com/xenodium/homebrew-wuzapi).
-
-To install `wuzapi`, use:
+To install `wuzapi` via [Homebrew](https://brew.sh) use:
 
 ```sh
-brew install xenodium/wuzapi/wuzapi
+brew install asternic/wuzapi/wuzapi
 ```
 
 ## Run

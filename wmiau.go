@@ -1465,7 +1465,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 							continue
 						}
 
-						messageID := messageKey.GetId()
+						messageID := messageKey.GetID()
 						if messageID == "" {
 							continue
 						}
@@ -1521,7 +1521,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 							messageType = "text"
 							textContent = ext.GetText()
 							if contextInfo := ext.GetContextInfo(); contextInfo != nil {
-								quotedMessageID = contextInfo.GetStanzaId()
+								quotedMessageID = contextInfo.GetStanzaID()
 							}
 						} else if img := message.GetImageMessage(); img != nil {
 							messageType = "image"
@@ -1552,7 +1552,7 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 							messageType = "reaction"
 							textContent = reaction.GetText()
 							if key := reaction.GetKey(); key != nil {
-								quotedMessageID = key.GetId()
+								quotedMessageID = key.GetID()
 							}
 						}
 

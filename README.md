@@ -65,6 +65,14 @@ go mod tidy
 go build .
 ```
 
+## Homebrew installation
+
+To install `wuzapi` via [Homebrew](https://brew.sh) use:
+
+```sh
+brew install asternic/wuzapi/wuzapi
+```
+
 ## Run
 
 By default it will start a REST service in port 8080. These are the parameters

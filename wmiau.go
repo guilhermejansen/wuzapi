@@ -1312,8 +1312,8 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 				} else if ext := evt.Message.GetExtendedTextMessage(); ext != nil {
 					textContent = ext.GetText()
 					// Check if this is a reply to another message
-					if contextInfo := ext.GetContextInfo(); contextInfo != nil && contextInfo.GetStanzaId() != "" {
-						replyToMessageID = contextInfo.GetStanzaId()
+					if contextInfo := ext.GetContextInfo(); contextInfo != nil && contextInfo.GetStanzaID() != "" {
+						replyToMessageID = contextInfo.GetStanzaID()
 					}
 				} else {
 					textContent = caption

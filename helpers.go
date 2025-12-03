@@ -743,7 +743,7 @@ func convertVideoStickerToWebP(input []byte) ([]byte, error) {
 	defer os.Remove(outPath)
 
 	qValue := 10
-	filter := "fps=15,scale=512:512:force_original_aspect_ratio=increase,crop=512:512"
+	filter := "fps=15,scale=512:512"
 	cmd := exec.Command(
 		"ffmpeg",
 		"-y",
@@ -794,7 +794,7 @@ func convertImageToWebP(input []byte) ([]byte, error) {
 	outFile.Close()
 	defer os.Remove(outPath)
 
-	filter := "scale=512:512:force_original_aspect_ratio=increase,crop=512:512"
+	filter := "scale=512:512"
 
 	cmd := exec.Command(
 		"ffmpeg",

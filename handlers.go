@@ -1351,7 +1351,7 @@ func (s *server) SendSticker() http.HandlerFunc {
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to process sticker data")
 			status := http.StatusBadRequest
-			if strings.Contains(err.Error(), "failed to convert video sticker") {
+			if strings.Contains(err.Error(), "failed to convert") {
 				status = http.StatusInternalServerError
 			}
 			s.Respond(w, r, status, errors.New(err.Error()))

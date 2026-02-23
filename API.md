@@ -192,6 +192,141 @@ Response:
 
 ---
 
+## HMAC Configuration
+
+The following _HMAC_ endpoints are used to configure and manage HMAC keys for webhook security. HMAC signatures verify that webhooks are authentic and haven't been tampered with.
+
+### Security Notes:
+
+* HMAC keys must be at least 32 characters long for security
+* Once saved, HMAC keys cannot be retrieved or viewed
+* All webhooks will include an `x-hmac-signature` header when HMAC is configured
+* Webhooks are signed using SHA-256 HMAC
+
+### Signature Generation by Content-Type:
+
+**`application/json`**
+* Signed data: Raw JSON request body
+* Verification: Use the exact JSON received
+
+**`application/x-www-form-urlencoded`**
+* Signed data: URL-encoded form string (`key=value&key2=value2`)
+* Verification: Reconstruct the form string from received parameters
+
+**`multipart/form-data`** (file uploads)
+* Signed data: JSON representation of form fields (excluding files)
+* Verification: Create JSON from non-file form fields
+
+* Always verify signatures before processing webhooks
+
+---
+
+## Configure HMAC Key
+
+Configures HMAC key for webhook signing to verify webhook authenticity.
+
+Endpoint: _/session/hmac/config_
+
+Method: **POST**
+
+**Headers:**
+
+* `Authorization: {user_token}`
+* `Content-Type: application/json`
+
+**Request Body:**
+
+```json
+{
+  "hmac_key": "your_hmac_key_minimum_32_characters_long_here"
+}
+```
+
+**Example Request:**
+
+```
+curl -s -X POST -H 'Authorization: 1234ABCD' -H 'Content-Type: application/json' --data '{"hmac_key":"your_hmac_key_minimum_32_characters_long_here"}' http://localhost:8080/session/hmac/config
+```
+
+**Response:**
+
+```json
+{
+  "code": 200,
+  "data": {
+    "Details": "HMAC configuration saved successfully"
+  },
+  "success": true
+}
+```
+
+**Error Responses:**
+
+* `400 Bad Request`: HMAC key less than 32 characters
+* `500 Internal Server Error`: Failed to save configuration
+
+---
+
+## Get HMAC Configuration Status
+
+Retrieves HMAC configuration status (does not return the actual key for security reasons).
+
+Endpoint: _/session/hmac/config_
+
+Method: **GET**
+
+**Headers:**
+
+* `Authorization: {user_token}`
+
+**Example Request:**
+
+```
+curl -s -X GET -H 'Authorization: 1234ABCD' http://localhost:8080/session/hmac/config
+```
+
+**Response:**
+
+```json
+{
+  "hmac_key": "***"
+}
+```
+
+---
+
+## Delete HMAC Configuration
+
+Removes HMAC configuration and disables webhook signing.
+
+Endpoint: _/session/hmac/config_
+
+Method: **DELETE**
+
+**Headers:**
+
+* `Authorization: {user_token}`
+
+**Example Request:**
+
+```
+curl -s -X DELETE -H 'Authorization: 1234ABCD' http://localhost:8080/session/hmac/config
+```
+
+**Response:**
+
+```json
+{
+  "code": 200,
+  "data": {
+    "Details": "HMAC configuration deleted successfully"
+  },
+  "success": true
+}
+```
+
+---
+
 ## Session
 
 The following _session_ endpoints are used to start a session to Whatsapp servers in order to send and receive messages
@@ -522,6 +657,12 @@ Example sending a new message:
 ```
 curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","Body":"Hellow Meow", "Id": "90B2F8B13FAC8A9CF6B06E99C7834DC5"}' http://localhost:8080/chat/send/text
 ```
+
+Example sending a new message with link preview
+```
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","Body":"Check my site? https://example.com", "Id": "90B2F8B13FAC8A9CF6B06E99C7834DC5","LinkPreview": true}' http://localhost:8080/chat/send/text
+```
+
 Example replying to some message:
 
 ```
@@ -620,15 +761,38 @@ curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"
 
 ## Send Sticker Message
 
-Sends a Sticker message. Sticker must be in image/webp format and base64 encoded in embedded format. You can optionally specify a PngThumbnail
+Sends a Sticker message. The API accepts:
+- **Static stickers**: `image/webp`
+- **Animated stickers**: `video/mp4`
+
+The sticker data must be base64 encoded in data URI format (e.g., `data:image/webp;base64,...`).
 
 Endpoint: _/chat/send/sticker_
 
 Method: **POST**
 
 
+Static WebP sticker:
 ```
-curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","PngThumbnail":"VBORgoAANSU=", "Sticker":"data:image/jpeg;base64,iVBORw0KGgoAAAANSU..."}' http://localhost:8080/chat/send/sticker
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","Sticker":"data:image/webp;base64,iVBORw0KGgoAAAANSU..."}' http://localhost:8080/chat/send/sticker
+```
+
+Static WebP sticker with pack metadata:
+```
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{
+  "Phone":"5491155554444",
+  "Sticker":"data:image/webp;base64,iVBORw0KGgoAAAANSU...",
+  "PackId":"com.example.my.pack",
+  "PackName":"My Pack",
+  "PackPublisher":"Wuzapi",
+  "Emojis":["😂","😍","👍","🎉"],
+  "PngThumbnail":"data:image/png;base64,iVBORw0KGgoAAAANSU..."
+}' http://localhost:8080/chat/send/sticker
+```
+
+Animated sticker:
+```
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Phone":"5491155554444","Sticker":"data:video/mp4;base64,AAAAIGZ0eXBpc29t..."}' http://localhost:8080/chat/send/sticker
 ```
 
 
@@ -680,16 +844,22 @@ curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"
 
 ## Mark message(s) as read
 
-Indicates that one or more messages were read. Id is an array of messages Ids. 
-Chat must always be set to the chat ID (user ID in DMs and group ID in group chats).
-Sender must be set in group chats and must be the user ID who sent the message.
+Indicates that one or more messages were read. Id is an array of messages Ids.
+The endpoint now supports two methods for chat identification to ensure backward compatibility:
+
+1. New Standard: Use ChatPhone and SenderPhone (recommended).
+2. Legacy: Use Chat and Sender (accepts full JID format).
+
+### Priority Logic
+
+The API processes the IDs using the following priority: `ChatPhone` > `Chat` (and `SenderPhone` > `Sender`).
 
 endpoint: _/chat/markread_
 
 method: **POST**
 
 ```
-curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Id":["AABBCCDD112233","IIOOPPLL43332"]","Chat":"5491155553934.0:1@s.whatsapp.net"}' http://localhost:8080/chat/markread
+curl -X POST -H 'Token: 1234ABCD' -H 'Content-Type: application/json' --data '{"Id":["AABBCCDD112233", "IIOOPPLL43332"], "ChatPhone":"5491155553934", "SenderPhone":"5491155553935"}' http://localhost:8080/chat/markread
 ```
 
 ---

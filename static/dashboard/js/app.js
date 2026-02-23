@@ -103,6 +103,22 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
+  // Initialize add instance HMAC toggle
+  $('#addInstanceHmacToggle').checkbox({
+    onChange: function() {
+      const enabled = $('input[name="hmac_enabled"]').is(':checked');
+      if (enabled) {
+        $('#addInstanceHmacKeyWarningMessage').show();
+        $('#addInstanceHmacKeyField').show();
+      } else {
+        $('#addInstanceHmacKeyWarningMessage').hide();
+        $('#addInstanceHmacKeyField').hide();
+        // Clear HMAC field when disabled
+        $('input[name="hmac_key"]').val('');
+      }
+    }
+  });
+
   // Handle admin login button click
   adminLoginBtn.addEventListener('click', function() {
     isAdminLogin = true;
@@ -273,6 +289,17 @@ document.addEventListener('DOMContentLoaded', function() {
     loadS3Config();
   });
 
+  // History Configuration
+  document.getElementById('historyConfig').addEventListener('click', function() {
+    $('#modalHistoryConfig').modal({
+      onApprove: function() {
+        saveHistoryConfig();
+        return false;
+      }
+    }).modal('show');
+    loadHistoryConfig();
+  });
+
   // Proxy Configuration
   document.getElementById('proxyConfig').addEventListener('click', function() {
     $('#modalProxyConfig').modal({
@@ -297,6 +324,50 @@ document.addEventListener('DOMContentLoaded', function() {
   // S3 Delete Configuration
   document.getElementById('deleteS3Config').addEventListener('click', function() {
     deleteS3Config();
+  });
+
+  // HMAC Configuration
+  document.getElementById('hmacConfig').addEventListener('click', function() {
+    $('#modalHmacConfig').modal({
+      onApprove: function() {
+        saveHmacConfig();
+        return false;
+      }
+    }).modal('show');
+    loadHmacConfig();
+  });
+
+  // HMAC Generate Key
+  document.getElementById('generateHmacKey').addEventListener('click', function() {
+    generateRandomHmacKey();
+  });
+
+  // HMAC Show/Hide Key
+  document.getElementById('showHmacKey').addEventListener('click', function() {
+    toggleHmacKeyVisibility();
+  });
+
+  document.getElementById('hideHmacKey').addEventListener('click', function() {
+    toggleHmacKeyVisibility();
+  });
+
+  // HMAC Delete Configuration
+  document.getElementById('deleteHmacConfig').addEventListener('click', function() {
+    deleteHmacConfig();
+  });
+
+  // HMAC Instance Generate Key
+  document.getElementById('generateHmacKeyInstance').addEventListener('click', function() {
+    generateRandomHmacKeyInstance();
+  });
+
+  // HMAC Instance Show/Hide Key
+  document.getElementById('showHmacKeyInstance').addEventListener('click', function() {
+    toggleHmacKeyVisibilityInstance();
+  });
+
+  document.getElementById('hideHmacKeyInstance').addEventListener('click', function() {
+    toggleHmacKeyVisibilityInstance();
   });
 
   // Proxy checkbox toggle is now initialized in DOMContentLoaded
@@ -333,6 +404,14 @@ document.addEventListener('DOMContentLoaded', function() {
           prompt: 'Please select at least one event'
         }]
       },
+      history: {
+        identifier: 'history',
+        optional: true,
+        rules: [{
+          type: 'integer[0..]',
+          prompt: 'History must be a non-negative integer'
+        }]
+      },
       proxy_url: {
         identifier: 'proxy_url',
         optional: true,
@@ -360,16 +439,17 @@ document.addEventListener('DOMContentLoaded', function() {
     },
     onSuccess: function(event, fields) {
       event.preventDefault();
-      
+
       // Validate conditional fields
       const proxyEnabled = fields.proxy_enabled === 'on' || fields.proxy_enabled === true;
       const s3Enabled = fields.s3_enabled === 'on' || fields.s3_enabled === true;
-      
+      const hmacEnabled = fields.hmac_enabled === 'on' || fields.hmac_enabled === true;
+
       if (proxyEnabled && !fields.proxy_url) {
         showError('Proxy URL is required when proxy is enabled');
         return false;
       }
-      
+
       if (s3Enabled) {
         if (!fields.s3_bucket) {
           showError('S3 bucket name is required when S3 is enabled');
@@ -384,7 +464,17 @@ document.addEventListener('DOMContentLoaded', function() {
           return false;
         }
       }
-      
+
+      if (hmacEnabled && !fields.hmac_key) {
+        showError('HMAC key is required when HMAC is enabled');
+        return false;
+      }
+
+      if (hmacEnabled && fields.hmac_key && fields.hmac_key.length < 32) {
+        showError('HMAC key must be at least 32 characters long');
+        return false;
+      }
+
       addInstance(fields).then((result) => {
         if (result.success) {
           showSuccess('Instance created successfully');
@@ -396,15 +486,18 @@ document.addEventListener('DOMContentLoaded', function() {
       }).catch((error) => {
         showError('Error creating instance: ' + error.message);
       });
-      
+
       $('#addInstanceModal').modal('hide');
       $('#addInstanceForm').form('reset');
       $('.ui.dropdown').dropdown('restore defaults');
       // Reset toggles
       $('#addInstanceProxyToggle').checkbox('set unchecked');
       $('#addInstanceS3Toggle').checkbox('set unchecked');
+      $('#addInstanceHmacToggle').checkbox('set unchecked');
       $('#addInstanceProxyUrlField').hide();
       $('#addInstanceS3Fields').hide();
+      $('#addInstanceHmacKeyWarningMessage').hide();
+      $('#addInstanceHmacKeyField').hide();
     }
   });
 
@@ -417,7 +510,7 @@ async function addInstance(data) {
   const myHeaders = new Headers();
   myHeaders.append('authorization', admintoken);
   myHeaders.append('Content-Type', 'application/json');
-  
+
   // Build proxy configuration
   const proxyEnabled = data.proxy_enabled === 'on' || data.proxy_enabled === true;
   const proxyConfig = {
@@ -440,25 +533,31 @@ async function addInstance(data) {
     mediaDelivery: s3Enabled ? (data.s3_media_delivery || 'base64') : 'base64',
     retentionDays: s3Enabled ? (parseInt(data.s3_retention_days) || 30) : 30
   };
-  
+
+  // Build HMAC configuration
+  const hmacEnabled = data.hmac_enabled === 'on' || data.hmac_enabled === true;
+  const hmacKey = hmacEnabled ? (data.hmac_key || '') : '';
+
   const payload = {
     name: data.name,
     token: data.token,
     events: data.events.join(','),
     webhook: data.webhook_url || '',
     expiration: 0,
+    history: parseInt(data.history) || 0,
     proxyConfig: proxyConfig,
-    s3Config: s3Config
+    s3Config: s3Config,
+    hmacKey: hmacKey
   };
-  
+
   console.log("Payload being sent:", payload);
-  
+
   res = await fetch(baseUrl + "/admin/users", {
     method: "POST",
     headers: myHeaders,
     body: JSON.stringify(payload)
   });
-  
+
   const responseData = await res.json();
   console.log("Response:", responseData);
   return responseData;
@@ -1143,8 +1242,16 @@ function populateInstances(instances) {
                               <div class="content" style="word-break: break-all;">${instance.webhook || 'Not configured'}</div>
                           </div>
                           <div class="item">
+                              <div class="header">HMAC</div>
+                              <div class="content">${instance.hmac_configured ? 'Configured' : 'Not configured'}</div>
+                          </div>
+                          <div class="item">
                               <div class="header">Subscribed Events</div>
                               <div class="content">${instance.events || 'Not configured'}</div>
+                          </div>
+                          <div class="item">
+                              <div class="header">Message History</div>
+                              <div class="content">${instance.history || 0} messages per chat</div>
                           </div>
                           <div class="item">
                               <div class="header">Proxy</div>
@@ -1496,6 +1603,66 @@ async function deleteS3Config() {
   }
 }
 
+// History Configuration Functions
+async function loadHistoryConfig() {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  
+  try {
+    // Get user status to check proxy_config
+    const res = await fetch(baseUrl + "/session/status", {
+      method: "GET",
+      headers: myHeaders
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      if (data.code === 200 && data.data && data.data.history) {
+        const historyConfig = data.data.history;
+        $('#history').val(historyConfig);
+        
+      } else {
+        $('#history').val('0');
+      }
+    }
+  } catch (error) {
+    console.error('Error loading history config:', error);
+  }
+}
+
+async function saveHistoryConfig() {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  
+  const historyConfig = parseInt($('#history').val());
+  
+  const config = {
+    history: historyConfig,
+  };
+  
+  try {
+    const res = await fetch(baseUrl + "/session/history", {
+      method: "POST",
+      headers: myHeaders,
+      body: JSON.stringify(config)
+    });
+    
+    const data = await res.json();
+    if (data.success) {
+      showSuccess('History configuration saved successfully');
+      $('#modalHistoryConfig').modal('hide');
+    } else {
+      showError('Failed to save history configuration: ' + (data.error || 'Unknown error'));
+    }
+  } catch (error) {
+    showError('Error saving history configuration');
+    console.error('Error:', error);
+  }
+}
+
 // Proxy Configuration Functions
 async function loadProxyConfig() {
   const token = getLocalStorageItem('token');
@@ -1613,5 +1780,177 @@ async function saveProxyConfig() {
   } catch (error) {
     showError('Error saving proxy configuration');
     console.error('Error:', error);
+  }
+}
+
+// HMAC Configuration Functions
+async function loadHmacConfig() {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  
+  try {
+    const res = await fetch(baseUrl + "/session/hmac/config", {
+      method: "GET",
+      headers: myHeaders
+    });
+    
+    if (res.ok) {
+      const hmacConfig = await res.json();
+      
+      $('#hmacKey').val(hmacConfig.hmac_key === '***' ? '' : hmacConfig.hmac_key);
+      
+      if (hmacConfig.hmac_key === '***') {
+        $('#deleteHmacConfig').show();
+      } else {
+        $('#deleteHmacConfig').hide();
+      }
+    } else {
+      // No config found or error
+      $('#deleteHmacConfig').hide();
+      $('#hmacKey').val('');
+    }
+  } catch (error) {
+    console.error('Error loading HMAC config:', error);
+    $('#deleteHmacConfig').hide();
+    $('#hmacKey').val('');
+  }
+}
+
+async function saveHmacConfig() {
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  myHeaders.append('Content-Type', 'application/json');
+  
+  const hmacKey = $('#hmacKey').val().trim();
+  
+  if (!hmacKey) {
+    showError('HMAC key is required');
+    return;
+  }
+  
+  if (hmacKey.length < 32) {
+    showError('HMAC key must be at least 32 characters long');
+    return;
+  }
+  
+  const config = {
+    hmac_key: hmacKey
+  };
+  
+  try {
+    const res = await fetch(baseUrl + "/session/hmac/config", {
+      method: "POST",
+      headers: myHeaders,
+      body: JSON.stringify(config)
+    });
+    
+    const response = await res.json();
+    
+    if (res.ok && response.Details) {
+      showSuccess('HMAC configuration saved successfully');
+      $('#deleteHmacConfig').show();
+      $('#modalHmacConfig').modal('hide');
+    } else {
+      showError('Failed to save HMAC configuration: ' + (response.error || 'Unknown error'));
+    }
+  } catch (error) {
+    showError('Error saving HMAC configuration');
+    console.error('Error:', error);
+  }
+}
+
+async function deleteHmacConfig() {
+  // Show confirmation dialog
+  if (!confirm('Are you sure you want to delete the HMAC configuration? This action cannot be undone.')) {
+    return;
+  }
+  
+  const token = getLocalStorageItem('token');
+  const myHeaders = new Headers();
+  myHeaders.append('token', token);
+  
+  // Show loading state
+  $('#deleteHmacConfig').addClass('loading disabled');
+  
+  try {
+    const res = await fetch(baseUrl + "/session/hmac/config", {
+      method: "DELETE",
+      headers: myHeaders
+    });
+    
+    const response = await res.json();
+    
+    // Nova verificação - estrutura direta sem "success"
+    if (res.ok && response.Details) {
+      showSuccess('HMAC configuration deleted successfully');
+      
+      // Clear form field
+      $('#hmacKey').val('');
+      
+      // Hide delete button
+      $('#deleteHmacConfig').hide();
+      
+      $('#modalHmacConfig').modal('hide');
+    } else {
+      showError('Failed to delete HMAC configuration: ' + (response.error || 'Unknown error'));
+    }
+  } catch (error) {
+    showError('Error deleting HMAC configuration');
+    console.error('Error:', error);
+  } finally {
+    $('#deleteHmacConfig').removeClass('loading disabled');
+  }
+}
+
+function generateRandomHmacKey() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 64; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  $('#hmacKey').val(result);
+}
+
+function toggleHmacKeyVisibility() {
+  const input = $('#hmacKey');
+  const showBtn = $('#showHmacKey');
+  const hideBtn = $('#hideHmacKey');
+  
+  if (input.attr('type') === 'password') {
+    input.attr('type', 'text');
+    showBtn.hide();
+    hideBtn.show();
+  } else {
+    input.attr('type', 'password');
+    showBtn.show();
+    hideBtn.hide();
+  }
+}
+
+// HMAC Instance Functions
+function generateRandomHmacKeyInstance() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 64; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  $('input[name="hmac_key"]').val(result);
+}
+
+function toggleHmacKeyVisibilityInstance() {
+  const input = $('input[name="hmac_key"]');
+  const showBtn = $('#showHmacKeyInstance');
+  const hideBtn = $('#hideHmacKeyInstance');
+  
+  if (input.attr('type') === 'password') {
+    input.attr('type', 'text');
+    showBtn.hide();
+    hideBtn.show();
+  } else {
+    input.attr('type', 'password');
+    showBtn.show();
+    hideBtn.hide();
   }
 }

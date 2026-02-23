@@ -32,8 +32,11 @@ tasks/
 scripts/
 .roo/
 .cursor/
-.env.example
 .roomodes
 .taskmasterconfig
 .windsurfrules
 NEW_FEATS.md
+
+*.code-workspace
+**/*.code-workspace
+.vscode/workspaceStorage/

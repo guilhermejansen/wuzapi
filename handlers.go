@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +29,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 
+	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
@@ -37,6 +40,82 @@ type Values struct {
 
 func (v Values) Get(key string) string {
 	return v.m[key]
+}
+
+func (s *server) GetHealth() http.HandlerFunc {
+	type HealthResponse struct {
+		Status            string                 `json:"status"`
+		Timestamp         string                 `json:"timestamp"`
+		Uptime            string                 `json:"uptime"`
+		ActiveConnections int                    `json:"active_connections"`
+		TotalUsers        int                    `json:"total_users"`
+		ConnectedUsers    int                    `json:"connected_users"`
+		LoggedInUsers     int                    `json:"logged_in_users"`
+		MemoryStats       map[string]interface{} `json:"memory_stats"`
+		GoRoutines        int                    `json:"goroutines"`
+		Version           string                 `json:"version,omitempty"`
+	}
+
+	startTime := time.Now()
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		uptime := time.Since(startTime)
+
+		var totalUsers int
+		rows, err := s.db.Query("SELECT COUNT(*) FROM users")
+		if err == nil {
+			defer rows.Close()
+			if rows.Next() {
+				rows.Scan(&totalUsers)
+			}
+		}
+
+		clientManager.RLock()
+		activeConnections := len(clientManager.whatsmeowClients)
+		connectedUsers := 0
+		loggedInUsers := 0
+
+		for _, client := range clientManager.whatsmeowClients {
+			if client != nil {
+				if client.IsConnected() {
+					connectedUsers++
+				}
+				if client.IsLoggedIn() {
+					loggedInUsers++
+				}
+			}
+		}
+		clientManager.RUnlock()
+
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
+
+		memoryStats := map[string]interface{}{
+			"alloc_mb":       memStats.Alloc / 1024 / 1024,
+			"total_alloc_mb": memStats.TotalAlloc / 1024 / 1024,
+			"sys_mb":         memStats.Sys / 1024 / 1024,
+			"num_gc":         memStats.NumGC,
+		}
+
+		response := HealthResponse{
+			Status:            "ok",
+			Timestamp:         time.Now().UTC().Format(time.RFC3339),
+			Uptime:            uptime.String(),
+			ActiveConnections: activeConnections,
+			TotalUsers:        totalUsers,
+			ConnectedUsers:    connectedUsers,
+			LoggedInUsers:     loggedInUsers,
+			MemoryStats:       memoryStats,
+			GoRoutines:        runtime.NumGoroutine(),
+			Version:           version,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Error().Err(err).Msg("Failed to write health check response")
+		}
+	}
 }
 
 // messageTypes moved to constants.go as supportedEventTypes
@@ -63,6 +142,7 @@ func (s *server) authalice(next http.Handler) http.Handler {
 		events := ""
 		proxy_url := ""
 		qrcode := ""
+		var hasHmac bool // ← Nova variável para status HMAC
 
 		// Get token from headers or uri parameters
 		token := r.Header.Get("token")
@@ -74,18 +154,27 @@ func (s *server) authalice(next http.Handler) http.Handler {
 		if !found {
 			log.Info().Msg("Looking for user information in DB")
 			// Checks DB from matching user and store user values in context
-			rows, err := s.db.Query("SELECT id,name,webhook,jid,events,proxy_url,qrcode FROM users WHERE token=$1 LIMIT 1", token)
+			rows, err := s.db.Query("SELECT id,name,webhook,jid,events,proxy_url,qrcode,history,hmac_key IS NOT NULL AND length(hmac_key) > 0 FROM users WHERE token=$1 LIMIT 1", token)
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, err)
 				return
 			}
 			defer rows.Close()
+			var history sql.NullInt64
 			for rows.Next() {
-				err = rows.Scan(&txtid, &name, &webhook, &jid, &events, &proxy_url, &qrcode)
+				err = rows.Scan(&txtid, &name, &webhook, &jid, &events, &proxy_url, &qrcode, &history, &hasHmac)
 				if err != nil {
 					s.Respond(w, r, http.StatusInternalServerError, err)
 					return
 				}
+				historyStr := "0"
+				if history.Valid {
+					historyStr = fmt.Sprintf("%d", history.Int64)
+				}
+
+				// Debug logging for history value
+				log.Debug().Str("userId", txtid).Bool("historyValid", history.Valid).Int64("historyValue", history.Int64).Str("historyStr", historyStr).Msg("User authentication - history debug")
+
 				v := Values{map[string]string{
 					"Id":      txtid,
 					"Name":    name,
@@ -95,6 +184,8 @@ func (s *server) authalice(next http.Handler) http.Handler {
 					"Proxy":   proxy_url,
 					"Events":  events,
 					"Qrcode":  qrcode,
+					"History": historyStr,
+					"HasHmac": strconv.FormatBool(hasHmac),
 				}}
 
 				userinfocache.Set(token, v, cache.NoExpiration)
@@ -174,7 +265,7 @@ func (s *server) Connect() http.HandlerFunc {
 		userinfocache.Set(token, v, cache.NoExpiration)
 
 		log.Info().Str("jid", jid).Msg("Attempt to connect")
-		killchannel[txtid] = make(chan bool)
+		killchannel[txtid] = make(chan bool, 1)
 		go s.startClient(txtid, jid, token, subscribedEvents)
 
 		if t.Immediate == false {
@@ -230,8 +321,11 @@ func (s *server) Disconnect() http.HandlerFunc {
 			response := map[string]interface{}{"Details": "Disconnected"}
 			responseJson, err := json.Marshal(response)
 
-			clientManager.DeleteWhatsmeowClient(txtid) // mameluco
-			killchannel[txtid] <- true
+			clientManager.DeleteWhatsmeowClient(txtid)
+			select {
+			case killchannel[txtid] <- true:
+			default:
+			}
 
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, err)
@@ -532,7 +626,10 @@ func (s *server) Logout() http.HandlerFunc {
 				} else {
 					log.Info().Str("jid", jid).Msg("Logged out")
 					clientManager.DeleteWhatsmeowClient(txtid)
-					killchannel[txtid] <- true
+					select {
+					case killchannel[txtid] <- true:
+					default:
+					}
 				}
 			} else {
 				if clientManager.GetWhatsmeowClient(txtid).IsConnected() == true {
@@ -614,12 +711,9 @@ func (s *server) PairPhone() http.HandlerFunc {
 
 // Gets Connected and LoggedIn Status
 func (s *server) GetStatus() http.HandlerFunc {
-
 	return func(w http.ResponseWriter, r *http.Request) {
-
 		userInfo := r.Context().Value("userinfo").(Values)
 
-		// Log all userinfo values
 		log.Info().
 			Str("Id", userInfo.Get("Id")).
 			Str("Jid", userInfo.Get("Jid")).
@@ -628,59 +722,79 @@ func (s *server) GetStatus() http.HandlerFunc {
 			Str("Token", userInfo.Get("Token")).
 			Str("Events", userInfo.Get("Events")).
 			Str("Proxy", userInfo.Get("Proxy")).
+			Str("History", userInfo.Get("History")).
+			Str("HasHmac", userInfo.Get("HasHmac")).
 			Msg("User info values")
 
-		log.Info().Str("Name", userInfo.Get("Name")).Msg("User name")
-
 		txtid := userInfo.Get("Id")
-
-		/*
-			if clientManager.GetWhatsmeowClient(txtid) == nil {
-				s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
-				return
-			}
-		*/
 
 		isConnected := clientManager.GetWhatsmeowClient(txtid).IsConnected()
 		isLoggedIn := clientManager.GetWhatsmeowClient(txtid).IsLoggedIn()
 
-		// Get proxy_config
 		var proxyURL string
 		s.db.QueryRow("SELECT proxy_url FROM users WHERE id = $1", txtid).Scan(&proxyURL)
 		proxyConfig := map[string]interface{}{
 			"enabled":   proxyURL != "",
 			"proxy_url": proxyURL,
 		}
-		// Get s3_config
+
 		var s3Enabled bool
-		var s3Endpoint, s3Region, s3Bucket, s3AccessKey, s3PublicURL, s3MediaDelivery string
+		var s3Endpoint, s3Region, s3Bucket, s3PublicURL, s3MediaDelivery string
 		var s3PathStyle bool
 		var s3RetentionDays int
-		s.db.QueryRow(`SELECT s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days FROM users WHERE id = $1`, txtid).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3AccessKey, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays)
+
+		// Start with safe defaults so the field is always present in the response
 		s3Config := map[string]interface{}{
-			"enabled":        s3Enabled,
-			"endpoint":       s3Endpoint,
-			"region":         s3Region,
-			"bucket":         s3Bucket,
+			"enabled":        false,
+			"endpoint":       "",
+			"region":         "",
+			"bucket":         "",
 			"access_key":     "***",
-			"path_style":     s3PathStyle,
-			"public_url":     s3PublicURL,
-			"media_delivery": s3MediaDelivery,
-			"retention_days": s3RetentionDays,
+			"path_style":     false,
+			"public_url":     "",
+			"media_delivery": "",
+			"retention_days": 0,
 		}
+		err := s.db.QueryRow(`SELECT COALESCE(s3_enabled, false), COALESCE(s3_endpoint, ''), COALESCE(s3_region, ''), COALESCE(s3_bucket, ''), COALESCE(s3_path_style, false), COALESCE(s3_public_url, ''), COALESCE(media_delivery, ''), COALESCE(s3_retention_days, 0) FROM users WHERE id = $1`, txtid).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays)
+
+		if err == nil {
+			// Overwrite defaults with actual values if the query succeeded
+			s3Config["enabled"] = s3Enabled
+			s3Config["endpoint"] = s3Endpoint
+			s3Config["region"] = s3Region
+			s3Config["bucket"] = s3Bucket
+			s3Config["path_style"] = s3PathStyle
+			s3Config["public_url"] = s3PublicURL
+			s3Config["media_delivery"] = s3MediaDelivery
+			s3Config["retention_days"] = s3RetentionDays
+		} else {
+			if err != sql.ErrNoRows {
+				log.Warn().Err(err).Str("user_id", txtid).Msg("Failed to query S3 config for user")
+			}
+		}
+
+		var hmacKey []byte
+		err = s.db.QueryRow("SELECT hmac_key FROM users WHERE id = $1", txtid).Scan(&hmacKey)
+		if err != nil && err != sql.ErrNoRows {
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to query HMAC key")
+		}
+		hmacConfigured := len(hmacKey) > 0
+
 		response := map[string]interface{}{
-			"id":           txtid,
-			"name":         userInfo.Get("Name"),
-			"connected":    isConnected,
-			"loggedIn":     isLoggedIn,
-			"token":        userInfo.Get("Token"),
-			"jid":          userInfo.Get("Jid"),
-			"webhook":      userInfo.Get("Webhook"),
-			"events":       userInfo.Get("Events"),
-			"proxy_url":    userInfo.Get("Proxy"),
-			"qrcode":       userInfo.Get("Qrcode"),
-			"proxy_config": proxyConfig,
-			"s3_config":    s3Config,
+			"id":              txtid,
+			"name":            userInfo.Get("Name"),
+			"connected":       isConnected,
+			"loggedIn":        isLoggedIn,
+			"token":           userInfo.Get("Token"),
+			"jid":             userInfo.Get("Jid"),
+			"webhook":         userInfo.Get("Webhook"),
+			"events":          userInfo.Get("Events"),
+			"proxy_url":       userInfo.Get("Proxy"),
+			"qrcode":          userInfo.Get("Qrcode"),
+			"history":         userInfo.Get("History"),
+			"proxy_config":    proxyConfig,
+			"s3_config":       s3Config,
+			"hmac_configured": hmacConfigured,
 		}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
@@ -703,6 +817,7 @@ func (s *server) SendDocument() http.HandlerFunc {
 		Id          string
 		MimeType    string
 		ContextInfo waE2E.ContextInfo
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -792,17 +907,36 @@ func (s *server) SendDocument() http.HandlerFunc {
 		}}
 
 		if t.ContextInfo.StanzaID != nil {
-			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, it uses the old logic (empty message).
+				qm = &waE2E.Message{Conversation: proto.String("")}
+			}
+
+			if msg.DocumentMessage.ContextInfo == nil {
+				msg.DocumentMessage.ContextInfo = &waE2E.ContextInfo{
+					StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+					Participant:   proto.String(*t.ContextInfo.Participant),
+					QuotedMessage: qm,
+				}
 			}
 		}
 		if t.ContextInfo.MentionedJID != nil {
-			if msg.ExtendedTextMessage.ContextInfo == nil {
-				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+			if msg.DocumentMessage.ContextInfo == nil {
+				msg.DocumentMessage.ContextInfo = &waE2E.ContextInfo{}
 			}
-			msg.ExtendedTextMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+			msg.DocumentMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+		}
+
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.DocumentMessage.ContextInfo == nil {
+				msg.DocumentMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.DocumentMessage.ContextInfo.IsForwarded = proto.Bool(true)
 		}
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
@@ -810,6 +944,10 @@ func (s *server) SendDocument() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Error sending message: %v", err)))
 			return
 		}
+
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "document", t.Caption, "", historyLimit)
 
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
@@ -831,7 +969,12 @@ func (s *server) SendAudio() http.HandlerFunc {
 		Audio       string
 		Caption     string
 		Id          string
+		PTT         *bool  `json:"ptt,omitempty"`
+		MimeType    string `json:"mimetype,omitempty"`
+		Seconds     uint32
+		Waveform    []byte
 		ContextInfo waE2E.ContextInfo
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -879,7 +1022,7 @@ func (s *server) SendAudio() http.HandlerFunc {
 		var uploaded whatsmeow.UploadResponse
 		var filedata []byte
 
-		if t.Audio[0:14] == "data:audio/ogg" {
+		if strings.HasPrefix(t.Audio, "data:audio/") {
 			var dataURL, err = dataurl.DecodeString(t.Audio)
 			if err != nil {
 				s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode base64 encoded data from payload"))
@@ -893,37 +1036,73 @@ func (s *server) SendAudio() http.HandlerFunc {
 				}
 			}
 		} else {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("audio data should start with \"data:audio/ogg;base64,\""))
+			s.Respond(w, r, http.StatusBadRequest, errors.New("audio data should start with \"data:audio/\""))
 			return
 		}
 
+		// Configure PTT (Push to Talk) - default is true, setting it to false is a breaking change
 		ptt := true
-		mime := "audio/ogg; codecs=opus"
+		if t.PTT != nil {
+			ptt = *t.PTT
+		}
+
+		// Configure MIME type
+		var mime string
+		if t.MimeType != "" {
+			mime = t.MimeType
+		} else {
+			// Default MIME types based on PTT setting
+			if ptt {
+				mime = "audio/ogg; codecs=opus"
+			} else {
+				mime = "audio/mpeg"
+			}
+		}
 
 		msg := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
-			URL:        proto.String(uploaded.URL),
-			DirectPath: proto.String(uploaded.DirectPath),
-			MediaKey:   uploaded.MediaKey,
-			//Mimetype:      proto.String(http.DetectContentType(filedata)),
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
 			Mimetype:      &mime,
 			FileEncSHA256: uploaded.FileEncSHA256,
 			FileSHA256:    uploaded.FileSHA256,
 			FileLength:    proto.Uint64(uint64(len(filedata))),
 			PTT:           &ptt,
+			Seconds:       proto.Uint32(t.Seconds),
+			Waveform:      t.Waveform,
 		}}
 
 		if t.ContextInfo.StanzaID != nil {
-			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, it uses the old logic (empty message).
+				qm = &waE2E.Message{Conversation: proto.String("")}
+			}
+
+			if msg.AudioMessage.ContextInfo == nil {
+				msg.AudioMessage.ContextInfo = &waE2E.ContextInfo{
+					StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+					Participant:   proto.String(*t.ContextInfo.Participant),
+					QuotedMessage: qm,
+				}
 			}
 		}
 		if t.ContextInfo.MentionedJID != nil {
-			if msg.ExtendedTextMessage.ContextInfo == nil {
-				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+			if msg.AudioMessage.ContextInfo == nil {
+				msg.AudioMessage.ContextInfo = &waE2E.ContextInfo{}
 			}
-			msg.ExtendedTextMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+			msg.AudioMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+		}
+
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.AudioMessage.ContextInfo == nil {
+				msg.AudioMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.AudioMessage.ContextInfo.IsForwarded = proto.Bool(true)
 		}
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
@@ -931,6 +1110,10 @@ func (s *server) SendAudio() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Error sending message: %v", err)))
 			return
 		}
+
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "audio", "", "", historyLimit)
 
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
@@ -948,12 +1131,13 @@ func (s *server) SendAudio() http.HandlerFunc {
 func (s *server) SendImage() http.HandlerFunc {
 
 	type imageStruct struct {
-		Phone       string
-		Image       string
-		Caption     string
-		Id          string
-		MimeType    string
-		ContextInfo waE2E.ContextInfo
+		Phone         string
+		Image         string
+		Caption       string
+		Id            string
+		MimeType      string
+		ContextInfo   waE2E.ContextInfo
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1002,52 +1186,69 @@ func (s *server) SendImage() http.HandlerFunc {
 		var filedata []byte
 		var thumbnailBytes []byte
 
-		if t.Image[0:10] == "data:image" {
+		if len(t.Image) >= 10 && t.Image[0:10] == "data:image" {
 			var dataURL, err = dataurl.DecodeString(t.Image)
 			if err != nil {
 				s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode base64 encoded data from payload"))
 				return
 			} else {
 				filedata = dataURL.Data
-				uploaded, err = clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), filedata, whatsmeow.MediaImage)
-				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
-					return
-				}
 			}
-
-			// decode jpeg into image.Image
-			reader := bytes.NewReader(filedata)
-			img, _, err := image.Decode(reader)
+		} else if isHTTPURL(t.Image) {
+			data, ct, err := fetchURLBytes(r.Context(), t.Image, openGraphImageMaxBytes)
 			if err != nil {
-				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not decode image for thumbnail preparation: %v", err)))
+				s.Respond(w, r, http.StatusBadRequest, errors.New(fmt.Sprintf("failed to fetch image from url: %v", err)))
 				return
 			}
-
-			// resize to width 72 using Lanczos resampling and preserve aspect ratio
-			m := resize.Thumbnail(72, 72, img, resize.Lanczos3)
-
-			tmpFile, err := os.CreateTemp("", "resized-*.jpg")
+			mimeType := ct
+			if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+				mimeType = "image/jpeg"
+			}
+			imgDataURL := dataurl.New(data, mimeType)
+			parsed, err := dataurl.DecodeString(imgDataURL.String())
 			if err != nil {
-				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Could not create temp file for thumbnail: %v", err)))
+				s.Respond(w, r, http.StatusInternalServerError, errors.New("could not re-encode image to base64"))
 				return
 			}
-			defer tmpFile.Close()
-
-			// write new image to file
-			if err := jpeg.Encode(tmpFile, m, nil); err != nil {
-				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to encode jpeg: %v", err)))
-				return
-			}
-
-			thumbnailBytes, err = os.ReadFile(tmpFile.Name())
-			if err != nil {
-				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to read %s: %v", tmpFile.Name(), err)))
-				return
-			}
-
+			filedata = parsed.Data
 		} else {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("Image data should start with \"data:image/png;base64,\""))
+			return
+		}
+
+		uploaded, err = clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), filedata, whatsmeow.MediaImage)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
+			return
+		}
+
+		// decode jpeg into image.Image
+		reader := bytes.NewReader(filedata)
+		img, _, err := image.Decode(reader)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not decode image for thumbnail preparation: %v", err)))
+			return
+		}
+
+		// resize to width 72 using Lanczos resampling and preserve aspect ratio
+		m := resize.Thumbnail(72, 72, img, resize.Lanczos3)
+
+		tmpFile, err := os.CreateTemp("", "resized-*.jpg")
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Could not create temp file for thumbnail: %v", err)))
+			return
+		}
+		defer tmpFile.Close()
+
+		// write new image to file
+		if err := jpeg.Encode(tmpFile, m, nil); err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to encode jpeg: %v", err)))
+			return
+		}
+
+		thumbnailBytes, err = os.ReadFile(tmpFile.Name())
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to read %s: %v", tmpFile.Name(), err)))
 			return
 		}
 
@@ -1069,17 +1270,37 @@ func (s *server) SendImage() http.HandlerFunc {
 		}}
 
 		if t.ContextInfo.StanzaID != nil {
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, it uses the old logic (empty message).
+				qm = &waE2E.Message{Conversation: proto.String("")}
+			}
+
 			if msg.ImageMessage.ContextInfo == nil {
 				msg.ImageMessage.ContextInfo = &waE2E.ContextInfo{
 					StanzaID:      proto.String(*t.ContextInfo.StanzaID),
 					Participant:   proto.String(*t.ContextInfo.Participant),
-					QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+					QuotedMessage: qm,
 				}
 			}
 		}
 
 		if t.ContextInfo.MentionedJID != nil {
+			if msg.ImageMessage.ContextInfo == nil {
+				msg.ImageMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
 			msg.ImageMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+		}
+
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.ImageMessage.ContextInfo == nil {
+				msg.ImageMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.ImageMessage.ContextInfo.IsForwarded = proto.Bool(true)
 		}
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
@@ -1087,6 +1308,10 @@ func (s *server) SendImage() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Error sending message: %v", err)))
 			return
 		}
+
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "image", t.Caption, "", historyLimit)
 
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
@@ -1104,12 +1329,17 @@ func (s *server) SendImage() http.HandlerFunc {
 func (s *server) SendSticker() http.HandlerFunc {
 
 	type stickerStruct struct {
-		Phone        string
-		Sticker      string
-		Id           string
-		PngThumbnail []byte
-		MimeType     string
-		ContextInfo  waE2E.ContextInfo
+		Phone         string
+		Sticker       string
+		Id            string
+		PngThumbnail  []byte
+		MimeType      string
+		PackId        string
+		PackName      string
+		PackPublisher string
+		Emojis        []string
+		ContextInfo   waE2E.ContextInfo
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1154,55 +1384,72 @@ func (s *server) SendSticker() http.HandlerFunc {
 			msgid = t.Id
 		}
 
-		var uploaded whatsmeow.UploadResponse
-		var filedata []byte
-
-		if t.Sticker[0:4] == "data" {
-			var dataURL, err = dataurl.DecodeString(t.Sticker)
-			if err != nil {
-				s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode base64 encoded data from payload"))
-				return
-			} else {
-				filedata = dataURL.Data
-				uploaded, err = clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), filedata, whatsmeow.MediaImage)
-				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to upload file: %v", err)))
-					return
-				}
+		processedData, detectedMimeType, err := processStickerData(
+			t.Sticker,
+			t.MimeType,
+			t.PackId,
+			t.PackName,
+			t.PackPublisher,
+			t.Emojis,
+		)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to process sticker data")
+			status := http.StatusBadRequest
+			if strings.Contains(err.Error(), "failed to convert") {
+				status = http.StatusInternalServerError
 			}
-		} else {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("Data should start with \"data:mime/type;base64,\""))
+			s.Respond(w, r, status, errors.New(err.Error()))
+			return
+		}
+
+		uploaded, err := clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), processedData, whatsmeow.MediaImage)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to upload file: %v", err)))
 			return
 		}
 
 		msg := &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
-			URL:        proto.String(uploaded.URL),
-			DirectPath: proto.String(uploaded.DirectPath),
-			MediaKey:   uploaded.MediaKey,
-			Mimetype: proto.String(func() string {
-				if t.MimeType != "" {
-					return t.MimeType
-				}
-				return http.DetectContentType(filedata)
-			}()),
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			Mimetype:      proto.String(detectedMimeType),
 			FileEncSHA256: uploaded.FileEncSHA256,
 			FileSHA256:    uploaded.FileSHA256,
-			FileLength:    proto.Uint64(uint64(len(filedata))),
+			FileLength:    proto.Uint64(uint64(len(processedData))),
 			PngThumbnail:  t.PngThumbnail,
 		}}
 
 		if t.ContextInfo.StanzaID != nil {
-			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, it uses the old logic (empty message).
+				qm = &waE2E.Message{Conversation: proto.String("")}
+			}
+
+			if msg.StickerMessage.ContextInfo == nil {
+				msg.StickerMessage.ContextInfo = &waE2E.ContextInfo{
+					StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+					Participant:   proto.String(*t.ContextInfo.Participant),
+					QuotedMessage: qm,
+				}
 			}
 		}
 		if t.ContextInfo.MentionedJID != nil {
-			if msg.ExtendedTextMessage.ContextInfo == nil {
-				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+			if msg.StickerMessage.ContextInfo == nil {
+				msg.StickerMessage.ContextInfo = &waE2E.ContextInfo{}
 			}
-			msg.ExtendedTextMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+			msg.StickerMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+		}
+
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.StickerMessage.ContextInfo == nil {
+				msg.StickerMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.StickerMessage.ContextInfo.IsForwarded = proto.Bool(true)
 		}
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
@@ -1210,6 +1457,10 @@ func (s *server) SendSticker() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("Error sending message: %v", err)))
 			return
 		}
+
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "sticker", "", "", historyLimit)
 
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
@@ -1234,6 +1485,7 @@ func (s *server) SendVideo() http.HandlerFunc {
 		JPEGThumbnail []byte
 		MimeType      string
 		ContextInfo   waE2E.ContextInfo
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1288,14 +1540,34 @@ func (s *server) SendVideo() http.HandlerFunc {
 				return
 			} else {
 				filedata = dataURL.Data
-				uploaded, err = clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), filedata, whatsmeow.MediaVideo)
-				if err != nil {
-					s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
-					return
-				}
+
 			}
+		} else if isHTTPURL(t.Video) {
+			data, ct, err := fetchURLBytes(r.Context(), t.Video, openGraphImageMaxBytes)
+			if err != nil {
+				s.Respond(w, r, http.StatusBadRequest, errors.New(fmt.Sprintf("failed to fetch image from url: %v", err)))
+				return
+			}
+			mimeType := ct
+			if !strings.HasPrefix(strings.ToLower(mimeType), "video/") {
+				mimeType = "video/mpeg"
+			}
+			imgDataURL := dataurl.New(data, mimeType)
+			parsed, err := dataurl.DecodeString(imgDataURL.String())
+			if err != nil {
+				s.Respond(w, r, http.StatusInternalServerError, errors.New("could not re-encode video to base64"))
+				return
+			}
+			filedata = parsed.Data
+
 		} else {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("data should start with \"data:mime/type;base64,\""))
+			return
+		}
+
+		uploaded, err = clientManager.GetWhatsmeowClient(txtid).Upload(context.Background(), filedata, whatsmeow.MediaVideo)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to upload file: %v", err)))
 			return
 		}
 
@@ -1317,17 +1589,36 @@ func (s *server) SendVideo() http.HandlerFunc {
 		}}
 
 		if t.ContextInfo.StanzaID != nil {
-			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, it uses the old logic (empty message).
+				qm = &waE2E.Message{Conversation: proto.String("")}
+			}
+
+			if msg.VideoMessage.ContextInfo == nil {
+				msg.VideoMessage.ContextInfo = &waE2E.ContextInfo{
+					StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+					Participant:   proto.String(*t.ContextInfo.Participant),
+					QuotedMessage: qm,
+				}
 			}
 		}
 		if t.ContextInfo.MentionedJID != nil {
-			if msg.ExtendedTextMessage.ContextInfo == nil {
-				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+			if msg.VideoMessage.ContextInfo == nil {
+				msg.VideoMessage.ContextInfo = &waE2E.ContextInfo{}
 			}
-			msg.ExtendedTextMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+			msg.VideoMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+		}
+
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.VideoMessage.ContextInfo == nil {
+				msg.VideoMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.VideoMessage.ContextInfo.IsForwarded = proto.Bool(true)
 		}
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
@@ -1335,6 +1626,10 @@ func (s *server) SendVideo() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error sending message: %v", err)))
 			return
 		}
+
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "video", t.Caption, "", historyLimit)
 
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
@@ -1357,6 +1652,7 @@ func (s *server) SendContact() http.HandlerFunc {
 		Name        string
 		Vcard       string
 		ContextInfo waE2E.ContextInfo
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1410,17 +1706,36 @@ func (s *server) SendContact() http.HandlerFunc {
 		}}
 
 		if t.ContextInfo.StanzaID != nil {
-			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, it uses the old logic (empty message).
+				qm = &waE2E.Message{Conversation: proto.String("")}
+			}
+
+			if msg.ContactMessage.ContextInfo == nil {
+				msg.ContactMessage.ContextInfo = &waE2E.ContextInfo{
+					StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+					Participant:   proto.String(*t.ContextInfo.Participant),
+					QuotedMessage: qm,
+				}
 			}
 		}
 		if t.ContextInfo.MentionedJID != nil {
-			if msg.ExtendedTextMessage.ContextInfo == nil {
-				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+			if msg.ContactMessage.ContextInfo == nil {
+				msg.ContactMessage.ContextInfo = &waE2E.ContextInfo{}
 			}
-			msg.ExtendedTextMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+			msg.ContactMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+		}
+
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.ContactMessage.ContextInfo == nil {
+				msg.ContactMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.ContactMessage.ContextInfo.IsForwarded = proto.Bool(true)
 		}
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
@@ -1428,6 +1743,10 @@ func (s *server) SendContact() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error sending message: %v", err)))
 			return
 		}
+
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "contact", t.Name, "", historyLimit)
 
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
@@ -1451,6 +1770,7 @@ func (s *server) SendLocation() http.HandlerFunc {
 		Latitude    float64
 		Longitude   float64
 		ContextInfo waE2E.ContextInfo
+		QuotedMessage *waE2E.Message `json:"QuotedMessage,omitempty"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1505,17 +1825,36 @@ func (s *server) SendLocation() http.HandlerFunc {
 		}}
 
 		if t.ContextInfo.StanzaID != nil {
-			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
-				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
-				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, it uses the old logic (empty message).
+				qm = &waE2E.Message{Conversation: proto.String("")}
+			}
+
+			if msg.LocationMessage.ContextInfo == nil {
+				msg.LocationMessage.ContextInfo = &waE2E.ContextInfo{
+					StanzaID:      proto.String(*t.ContextInfo.StanzaID),
+					Participant:   proto.String(*t.ContextInfo.Participant),
+					QuotedMessage: qm,
+				}
 			}
 		}
 		if t.ContextInfo.MentionedJID != nil {
-			if msg.ExtendedTextMessage.ContextInfo == nil {
-				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+			if msg.LocationMessage.ContextInfo == nil {
+				msg.LocationMessage.ContextInfo = &waE2E.ContextInfo{}
 			}
-			msg.ExtendedTextMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+			msg.LocationMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
+		}
+
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.LocationMessage.ContextInfo == nil {
+				msg.LocationMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.LocationMessage.ContextInfo.IsForwarded = proto.Bool(true)
 		}
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
@@ -1523,6 +1862,10 @@ func (s *server) SendLocation() http.HandlerFunc {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error sending message: %v", err)))
 			return
 		}
+
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "location", t.Name, "", historyLimit)
 
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
@@ -1671,6 +2014,7 @@ func (s *server) SendList() http.HandlerFunc {
 
 		var req listRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Error().Msg(fmt.Sprintf("%s", err))
 			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
 			return
 		}
@@ -1775,6 +2119,7 @@ func (s *server) SendList() http.HandlerFunc {
 			return
 		}
 
+		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message list sent")
 		response := map[string]interface{}{
 			"Details":   "Sent",
 			"Timestamp": resp.Timestamp,
@@ -1789,14 +2134,11 @@ func (s *server) SendList() http.HandlerFunc {
 	}
 }
 
-// Sends a regular text message
-func (s *server) SendMessage() http.HandlerFunc {
+// Sends a status text message
+func (s *server) SetStatusMessage() http.HandlerFunc {
 
 	type textStruct struct {
-		Phone       string
-		Body        string
-		Id          string
-		ContextInfo waE2E.ContextInfo
+		Body string
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1819,40 +2161,120 @@ func (s *server) SendMessage() http.HandlerFunc {
 			return
 		}
 
-		if t.Phone == "" {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Phone in Payload"))
-			return
-		}
-
 		if t.Body == "" {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Body in Payload"))
 			return
 		}
 
+		msg := proto.String(t.Body)
+
+		err = clientManager.GetWhatsmeowClient(txtid).SetStatusMessage(context.Background(), *msg)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error sending status message: %v", err)))
+			return
+		}
+
+		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Status message sent")
+		response := map[string]interface{}{"Details": "Set"}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+
+		return
+	}
+}
+
+// Sends a regular text message
+func (s *server) SendMessage() http.HandlerFunc {
+	type textStruct struct {
+		Phone         string
+		Body          string
+		LinkPreview   bool
+		Id            string
+		ContextInfo   waE2E.ContextInfo
+		QuotedText    string          `json:"QuotedText,omitempty"`
+		QuotedMessage *waE2E.Message  `json:"QuotedMessage,omitempty"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+		msgid := ""
+		var resp whatsmeow.SendResponse
+		decoder := json.NewDecoder(r.Body)
+		var t textStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
+			return
+		}
+		if t.Phone == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Phone in Payload"))
+			return
+		}
+		if t.Body == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Body in Payload"))
+			return
+		}
 		recipient, err := validateMessageFields(t.Phone, t.ContextInfo.StanzaID, t.ContextInfo.Participant)
 		if err != nil {
 			log.Error().Msg(fmt.Sprintf("%s", err))
 			s.Respond(w, r, http.StatusBadRequest, err)
 			return
 		}
-
 		if t.Id == "" {
 			msgid = clientManager.GetWhatsmeowClient(txtid).GenerateMessageID()
 		} else {
 			msgid = t.Id
 		}
-
+		var (
+			url         string
+			title       string
+			description string
+			imageData   []byte
+		)
+		if t.LinkPreview {
+			url = extractFirstURL(t.Body)
+			if url != "" {
+				title, description, imageData = getOpenGraphData(r.Context(), url, txtid)
+			}
+		}
 		msg := &waE2E.Message{
 			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text: &t.Body,
+				Text:          proto.String(t.Body),
+				MatchedText:   proto.String(url),
+				Title:         proto.String(title),
+				Description:   proto.String(description),
+				JPEGThumbnail: imageData,
 			},
 		}
-
 		if t.ContextInfo.StanzaID != nil {
+			var qm *waE2E.Message
+
+			// If QuotedMessage was provided, use it.
+			if t.QuotedMessage != nil {
+				qm = t.QuotedMessage
+			} else {
+				// Otherwise, use the old logic with QuotedText.
+				qm = &waE2E.Message{}
+				if t.QuotedText != "" {
+					qm.ExtendedTextMessage = &waE2E.ExtendedTextMessage{
+						Text: proto.String(t.QuotedText),
+					}
+				} else {
+					qm.Conversation = proto.String("")
+				}
+			}
+
 			msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
 				StanzaID:      proto.String(*t.ContextInfo.StanzaID),
 				Participant:   proto.String(*t.ContextInfo.Participant),
-				QuotedMessage: &waE2E.Message{Conversation: proto.String("")},
+				QuotedMessage: qm,
 			}
 		}
 		if t.ContextInfo.MentionedJID != nil {
@@ -1861,13 +2283,20 @@ func (s *server) SendMessage() http.HandlerFunc {
 			}
 			msg.ExtendedTextMessage.ContextInfo.MentionedJID = t.ContextInfo.MentionedJID
 		}
-
+		if t.ContextInfo.IsForwarded != nil && *t.ContextInfo.IsForwarded {
+			if msg.ExtendedTextMessage.ContextInfo == nil {
+				msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{}
+			}
+			msg.ExtendedTextMessage.ContextInfo.IsForwarded = proto.Bool(true)
+		}
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error sending message: %v", err)))
 			return
 		}
-
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+		s.saveOutgoingMessageToHistory(txtid, recipient.String(), msgid, "text", t.Body, "", historyLimit)
 		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
 		responseJson, err := json.Marshal(response)
@@ -1876,7 +2305,6 @@ func (s *server) SendMessage() http.HandlerFunc {
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
-
 		return
 	}
 }
@@ -2099,7 +2527,7 @@ func (s *server) SendEditMessage() http.HandlerFunc {
 			return
 		}
 
-		log.Info().Str("timestamp", fmt.Sprintf("%d", resp.Timestamp)).Str("id", msgid).Msg("Message edit sent")
+		log.Info().Str("timestamp", fmt.Sprintf("%d", resp.Timestamp.Unix())).Str("id", msgid).Msg("Message edit sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
@@ -2127,19 +2555,64 @@ func (s *server) RequestHistorySync() http.HandlerFunc {
 			return
 		}
 
-		info, found := lastMessageCache.Get(txtid)
-		if !found {
+		// Parse query parameters
+		query := r.URL.Query()
+
+		// Default count is 50, can be overridden by query parameter
+		count := 50
+		if countStr := query.Get("count"); countStr != "" {
+			if parsedCount, err := strconv.Atoi(countStr); err == nil && parsedCount > 0 {
+				count = parsedCount
+			}
+		}
+
+		// Get or create MessageInfo from cache or query parameters
+		var info *types.MessageInfo
+		if cachedInfo, found := lastMessageCache.Get(txtid); found {
+			info = cachedInfo.(*types.MessageInfo)
+		} else {
 			info = &types.MessageInfo{}
 		}
 
-		historyMsg := clientManager.GetWhatsmeowClient(txtid).BuildHistorySyncRequest(info.(*types.MessageInfo), 50)
+		// Override MessageInfo fields with query parameters if provided
+		if chatJIDStr := query.Get("chat_jid"); chatJIDStr != "" {
+			if chatJID, err := types.ParseJID(chatJIDStr); err == nil {
+				info.Chat = chatJID
+			}
+		}
+
+		if messageID := query.Get("oldest_msg_id"); messageID != "" {
+			info.ID = types.MessageID(messageID)
+		}
+
+		if oldestFromMeStr := query.Get("oldest_msg_from_me"); oldestFromMeStr != "" {
+			if oldestFromMe, err := strconv.ParseBool(oldestFromMeStr); err == nil {
+				info.IsFromMe = oldestFromMe
+			}
+		}
+
+		if timestampStr := query.Get("oldest_msg_timestamp"); timestampStr != "" {
+			if timestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+				info.Timestamp = time.UnixMilli(timestamp)
+			}
+		}
+
+		historyMsg := clientManager.GetWhatsmeowClient(txtid).BuildHistorySyncRequest(info, count)
 		if historyMsg == nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("Failed to build history sync request."))
 			return
 		}
 
 		targetJID := types.JID{Server: "s.whatsapp.net", User: "status"}
-		log.Debug().Str("userID", txtid).Str("target", targetJID.String()).Msg("Preparing to send history sync request")
+		log.Debug().
+			Str("userID", txtid).
+			Str("target", targetJID.String()).
+			Int("count", count).
+			Str("chat_jid", info.Chat.String()).
+			Str("oldest_msg_id", string(info.ID)).
+			Bool("oldest_msg_from_me", info.IsFromMe).
+			Time("oldest_msg_timestamp", info.Timestamp).
+			Msg("Preparing to send history sync request")
 
 		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), clientManager.GetMyClient(txtid).WAClient.Store.ID.ToNonAD(), historyMsg, whatsmeow.SendRequestExtra{Peer: true})
 		if err != nil {
@@ -2153,8 +2626,22 @@ func (s *server) RequestHistorySync() http.HandlerFunc {
 			return
 		}
 
-		log.Info().Str("timestamp", fmt.Sprintf("%v", resp.Timestamp)).Msg("History sync request sent")
-		response := map[string]interface{}{"Details": "History sync request Sent", "Timestamp": resp.Timestamp.Unix()}
+		log.Info().
+			Str("chat_jid", info.Chat.String()).
+			Str("oldest_msg_id", string(info.ID)).
+			Bool("oldest_msg_from_me", info.IsFromMe).
+			Time("oldest_msg_timestamp", info.Timestamp).
+			Msg("History sync request sent")
+
+		response := map[string]interface{}{
+			"details":              "History sync request Sent",
+			"timestamp":            resp.Timestamp.Unix(),
+			"count":                count,
+			"chat_jid":             info.Chat.String(),
+			"oldest_msg_id":        string(info.ID),
+			"oldest_msg_from_me":   info.IsFromMe,
+			"oldest_msg_timestamp": info.Timestamp.UnixMilli(),
+		}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, err)
@@ -2313,7 +2800,7 @@ func (s *server) SendTemplate() http.HandlerFunc {
 			return
 		}
 
-		log.Info().Str("timestamp", fmt.Sprintf("%d", resp.Timestamp)).Str("id", msgid).Msg("Message sent")
+		log.Info().Str("timestamp", fmt.Sprintf("%d", resp.Timestamp.Unix())).Str("id", msgid).Msg("Message sent")
 		response := map[string]interface{}{"Details": "Sent", "Timestamp": resp.Timestamp.Unix(), "Id": msgid}
 		responseJson, err := json.Marshal(response)
 		if err != nil {
@@ -2366,7 +2853,7 @@ func (s *server) CheckUser() http.HandlerFunc {
 			return
 		}
 
-		resp, err := clientManager.GetWhatsmeowClient(txtid).IsOnWhatsApp(t.Phone)
+		resp, err := clientManager.GetWhatsmeowClient(txtid).IsOnWhatsApp(context.Background(), t.Phone)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to check if users are on WhatsApp: %s", err)))
 			return
@@ -2433,7 +2920,7 @@ func (s *server) GetUser() http.HandlerFunc {
 			}
 			jids = append(jids, jid)
 		}
-		resp, err := clientManager.GetWhatsmeowClient(txtid).GetUserInfo(jids)
+		resp, err := clientManager.GetWhatsmeowClient(txtid).GetUserInfo(context.Background(), jids)
 
 		if err != nil {
 			msg := fmt.Sprintf("Failed to get user info: %v", err)
@@ -2497,7 +2984,7 @@ func (s *server) SendPresence() http.HandlerFunc {
 
 		log.Info().Str("presence", pre.Type).Msg("Your global presence status")
 
-		err = clientManager.GetWhatsmeowClient(txtid).SendPresence(presence)
+		err = clientManager.GetWhatsmeowClient(txtid).SendPresence(context.Background(), presence)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failure sending presence to Whatsapp servers"))
 			return
@@ -2554,7 +3041,7 @@ func (s *server) GetAvatar() http.HandlerFunc {
 		var pic *types.ProfilePictureInfo
 
 		existingID := ""
-		pic, err = clientManager.GetWhatsmeowClient(txtid).GetProfilePictureInfo(jid, &whatsmeow.GetProfilePictureParams{
+		pic, err = clientManager.GetWhatsmeowClient(txtid).GetProfilePictureInfo(context.Background(), jid, &whatsmeow.GetProfilePictureParams{
 			Preview:    t.Preview,
 			ExistingID: existingID,
 		})
@@ -2654,7 +3141,7 @@ func (s *server) ChatPresence() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).SendChatPresence(jid, types.ChatPresence(t.State), types.ChatPresenceMedia(t.Media))
+		err = clientManager.GetWhatsmeowClient(txtid).SendChatPresence(context.Background(), jid, types.ChatPresence(t.State), types.ChatPresenceMedia(t.Media))
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failure sending chat presence to Whatsapp servers"))
 			return
@@ -2991,9 +3478,10 @@ func (s *server) DownloadAudio() http.HandlerFunc {
 func (s *server) React() http.HandlerFunc {
 
 	type textStruct struct {
-		Phone string
-		Body  string
-		Id    string
+		Phone       string
+		Body        string
+		Id          string
+		Participant string
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -3028,7 +3516,6 @@ func (s *server) React() http.HandlerFunc {
 
 		recipient, ok := parseJID(t.Phone)
 		if !ok {
-			log.Error().Msg(fmt.Sprintf("%s", err))
 			s.Respond(w, r, http.StatusBadRequest, errors.New("could not parse Group JID"))
 			return
 		}
@@ -3050,20 +3537,32 @@ func (s *server) React() http.HandlerFunc {
 			reaction = ""
 		}
 
+		var participantJID types.JID
+		if !fromMe && t.Participant != "" {
+			if pj, ok := parseJID(t.Participant); ok {
+				participantJID = pj
+			}
+		}
+
+		key := &waCommon.MessageKey{
+			RemoteJID: proto.String(recipient.String()),
+			FromMe:    proto.Bool(fromMe),
+			ID:        proto.String(msgid),
+		}
+		if !fromMe && participantJID.String() != "" {
+			key.Participant = proto.String(participantJID.String())
+		}
+
 		msg := &waE2E.Message{
 			ReactionMessage: &waE2E.ReactionMessage{
-				Key: &waCommon.MessageKey{
-					RemoteJID: proto.String(recipient.String()),
-					FromMe:    proto.Bool(fromMe),
-					ID:        proto.String(msgid),
-				},
+				Key:               key,
 				Text:              proto.String(reaction),
 				GroupingKey:       proto.String(reaction),
 				SenderTimestampMS: proto.Int64(time.Now().UnixMilli()),
 			},
 		}
 
-		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: msgid})
+		resp, err = clientManager.GetWhatsmeowClient(txtid).SendMessage(context.Background(), recipient, msg)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error sending message: %v", err)))
 			return
@@ -3086,9 +3585,11 @@ func (s *server) React() http.HandlerFunc {
 func (s *server) MarkRead() http.HandlerFunc {
 
 	type markReadStruct struct {
-		Id     []string
-		Chat   types.JID
-		Sender types.JID
+		Id          []string
+		Chat        types.JID // Legacy: Kept for backward compatibility
+		Sender      types.JID // Legacy: Kept for backward compatibility
+		ChatPhone   string    // New standardized field (prioritized)
+		SenderPhone string    // New standardized field (prioritized)
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -3108,9 +3609,33 @@ func (s *server) MarkRead() http.HandlerFunc {
 			return
 		}
 
-		if t.Chat.String() == "" {
-			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Chat in Payload"))
+		var jidChat types.JID
+
+		if len(t.ChatPhone) > 0 {
+			var ok bool
+			jidChat, ok = parseJID(t.ChatPhone)
+			if !ok {
+				s.Respond(w, r, http.StatusBadRequest, errors.New("could not parse ChatPhone"))
+				return
+			}
+		} else if t.Chat.String() != "" {
+			jidChat = t.Chat
+		} else {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing ChatPhone in Payload"))
 			return
+		}
+
+		var jidSender types.JID
+
+		if len(t.SenderPhone) > 0 {
+			var ok bool
+			jidSender, ok = parseJID(t.SenderPhone)
+			if !ok {
+				s.Respond(w, r, http.StatusBadRequest, errors.New("could not parse SenderPhone"))
+				return
+			}
+		} else if t.Sender.String() != "" {
+			jidSender = t.Sender
 		}
 
 		if len(t.Id) < 1 {
@@ -3118,7 +3643,7 @@ func (s *server) MarkRead() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).MarkRead(t.Id, time.Now(), t.Chat, t.Sender)
+		err = clientManager.GetWhatsmeowClient(txtid).MarkRead(context.Background(), t.Id, time.Now(), jidChat, jidSender)
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failure marking messages as read"))
 			return
@@ -3151,7 +3676,7 @@ func (s *server) ListGroups() http.HandlerFunc {
 			return
 		}
 
-		resp, err := clientManager.GetWhatsmeowClient(txtid).GetJoinedGroups()
+		resp, err := clientManager.GetWhatsmeowClient(txtid).GetJoinedGroups(r.Context())
 
 		if err != nil {
 			msg := fmt.Sprintf("failed to get group list: %v", err)
@@ -3205,7 +3730,7 @@ func (s *server) GetGroupInfo() http.HandlerFunc {
 			return
 		}
 
-		resp, err := clientManager.GetWhatsmeowClient(txtid).GetGroupInfo(group)
+		resp, err := clientManager.GetWhatsmeowClient(txtid).GetGroupInfo(context.Background(), group)
 
 		if err != nil {
 			msg := fmt.Sprintf("Failed to get group info: %v", err)
@@ -3268,7 +3793,7 @@ func (s *server) GetGroupInviteLink() http.HandlerFunc {
 			return
 		}
 
-		resp, err := clientManager.GetWhatsmeowClient(txtid).GetGroupInviteLink(group, reset)
+		resp, err := clientManager.GetWhatsmeowClient(txtid).GetGroupInviteLink(context.Background(), group, reset)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("Failed to get group invite link")
@@ -3319,7 +3844,7 @@ func (s *server) GroupJoin() http.HandlerFunc {
 			return
 		}
 
-		_, err = clientManager.GetWhatsmeowClient(txtid).JoinGroupWithLink(t.Code)
+		_, err = clientManager.GetWhatsmeowClient(txtid).JoinGroupWithLink(context.Background(), t.Code)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to join group")
@@ -3392,7 +3917,7 @@ func (s *server) CreateGroup() http.HandlerFunc {
 			Participants: participantJIDs,
 		}
 
-		groupInfo, err := clientManager.GetWhatsmeowClient(txtid).CreateGroup(req)
+		groupInfo, err := clientManager.GetWhatsmeowClient(txtid).CreateGroup(r.Context(), req)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to create group")
@@ -3444,7 +3969,7 @@ func (s *server) SetGroupLocked() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).SetGroupLocked(group, t.Locked)
+		err = clientManager.GetWhatsmeowClient(txtid).SetGroupLocked(context.Background(), group, t.Locked)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to set group locked")
@@ -3517,7 +4042,7 @@ func (s *server) SetDisappearingTimer() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).SetDisappearingTimer(group, duration)
+		err = clientManager.GetWhatsmeowClient(txtid).SetDisappearingTimer(context.Background(), group, duration, time.Now())
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to set disappearing timer")
@@ -3569,7 +4094,7 @@ func (s *server) RemoveGroupPhoto() http.HandlerFunc {
 			return
 		}
 
-		_, err = clientManager.GetWhatsmeowClient(txtid).SetGroupPhoto(group, nil)
+		_, err = clientManager.GetWhatsmeowClient(txtid).SetGroupPhoto(context.Background(), group, nil)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to remove group photo")
@@ -3660,7 +4185,7 @@ func (s *server) UpdateGroupParticipants() http.HandlerFunc {
 			return
 		}
 
-		_, err = clientManager.GetWhatsmeowClient(txtid).UpdateGroupParticipants(group, phoneParsed, action)
+		_, err = clientManager.GetWhatsmeowClient(txtid).UpdateGroupParticipants(context.Background(), group, phoneParsed, action)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to change participant group")
@@ -3711,7 +4236,7 @@ func (s *server) GetGroupInviteInfo() http.HandlerFunc {
 			return
 		}
 
-		groupInfo, err := clientManager.GetWhatsmeowClient(txtid).GetGroupInfoFromLink(t.Code)
+		groupInfo, err := clientManager.GetWhatsmeowClient(txtid).GetGroupInfoFromLink(context.Background(), t.Code)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to get group invite info")
@@ -3796,7 +4321,7 @@ func (s *server) SetGroupPhoto() http.HandlerFunc {
 			return
 		}
 
-		picture_id, err := clientManager.GetWhatsmeowClient(txtid).SetGroupPhoto(group, filedata)
+		picture_id, err := clientManager.GetWhatsmeowClient(txtid).SetGroupPhoto(context.Background(), group, filedata)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to set group photo")
@@ -3854,7 +4379,7 @@ func (s *server) SetGroupName() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).SetGroupName(group, t.Name)
+		err = clientManager.GetWhatsmeowClient(txtid).SetGroupName(context.Background(), group, t.Name)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to set group name")
@@ -3912,7 +4437,7 @@ func (s *server) SetGroupTopic() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).SetGroupTopic(group, "", "", t.Topic)
+		err = clientManager.GetWhatsmeowClient(txtid).SetGroupTopic(context.Background(), group, "", "", t.Topic)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to set group topic")
@@ -3964,7 +4489,7 @@ func (s *server) GroupLeave() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).LeaveGroup(group)
+		err = clientManager.GetWhatsmeowClient(txtid).LeaveGroup(context.Background(), group)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to leave group")
@@ -4017,7 +4542,7 @@ func (s *server) SetGroupAnnounce() http.HandlerFunc {
 			return
 		}
 
-		err = clientManager.GetWhatsmeowClient(txtid).SetGroupAnnounce(group, t.Announce)
+		err = clientManager.GetWhatsmeowClient(txtid).SetGroupAnnounce(context.Background(), group, t.Announce)
 
 		if err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to set group announce")
@@ -4055,7 +4580,7 @@ func (s *server) ListNewsletter() http.HandlerFunc {
 			return
 		}
 
-		resp, err := clientManager.GetWhatsmeowClient(txtid).GetSubscribedNewsletters()
+		resp, err := clientManager.GetWhatsmeowClient(txtid).GetSubscribedNewsletters(context.Background())
 
 		if err != nil {
 			msg := fmt.Sprintf("failed to get newsletter list: %v", err)
@@ -4094,6 +4619,7 @@ func (s *server) ListUsers() http.HandlerFunc {
 		Expiration sql.NullInt64  `db:"expiration"`
 		ProxyURL   sql.NullString `db:"proxy_url"`
 		Events     string         `db:"events"`
+		History    sql.NullInt64  `db:"history"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -4104,11 +4630,11 @@ func (s *server) ListUsers() http.HandlerFunc {
 
 		if hasID {
 			// Fetch a single user
-			query = "SELECT id, name, token, webhook, jid, qrcode, connected, expiration, proxy_url, events FROM users WHERE id = $1"
+			query = "SELECT id, name, token, webhook, jid, qrcode, connected, expiration, proxy_url, events, history FROM users WHERE id = $1"
 			args = append(args, userID)
 		} else {
 			// Fetch all users
-			query = "SELECT id, name, token, webhook, jid, qrcode, connected, expiration, proxy_url, events FROM users"
+			query = "SELECT id, name, token, webhook, jid, qrcode, connected, expiration, proxy_url, events, history FROM users"
 		}
 
 		rows, err := s.db.Queryx(query, args...)
@@ -4159,23 +4685,38 @@ func (s *server) ListUsers() http.HandlerFunc {
 			}
 			// Add s3_config (search S3 fields in the database)
 			var s3Enabled bool
-			var s3Endpoint, s3Region, s3Bucket, s3AccessKey, s3PublicURL, s3MediaDelivery string
+			var s3Endpoint, s3Region, s3Bucket, s3PublicURL, s3MediaDelivery string
 			var s3PathStyle bool
 			var s3RetentionDays int
-			err = s.db.QueryRow(`SELECT s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days FROM users WHERE id = $1`, user.Id).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3AccessKey, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays)
+			// Start with safe defaults so the field is always present in the response
+			s3Config := map[string]interface{}{
+				"enabled":        false,
+				"endpoint":       "",
+				"region":         "",
+				"bucket":         "",
+				"access_key":     "***",
+				"path_style":     false,
+				"public_url":     "",
+				"media_delivery": "",
+				"retention_days": 0,
+			}
+			err = s.db.QueryRow(`SELECT COALESCE(s3_enabled, false), COALESCE(s3_endpoint, ''), COALESCE(s3_region, ''), COALESCE(s3_bucket, ''), COALESCE(s3_path_style, false), COALESCE(s3_public_url, ''), COALESCE(media_delivery, ''), COALESCE(s3_retention_days, 0) FROM users WHERE id = $1`, user.Id).Scan(&s3Enabled, &s3Endpoint, &s3Region, &s3Bucket, &s3PathStyle, &s3PublicURL, &s3MediaDelivery, &s3RetentionDays)
 			if err == nil {
-				userMap["s3_config"] = map[string]interface{}{
-					"enabled":        s3Enabled,
-					"endpoint":       s3Endpoint,
-					"region":         s3Region,
-					"bucket":         s3Bucket,
-					"access_key":     "***",
-					"path_style":     s3PathStyle,
-					"public_url":     s3PublicURL,
-					"media_delivery": s3MediaDelivery,
-					"retention_days": s3RetentionDays,
+				// Overwrite defaults with actual values if the query succeeded
+				s3Config["enabled"] = s3Enabled
+				s3Config["endpoint"] = s3Endpoint
+				s3Config["region"] = s3Region
+				s3Config["bucket"] = s3Bucket
+				s3Config["path_style"] = s3PathStyle
+				s3Config["public_url"] = s3PublicURL
+				s3Config["media_delivery"] = s3MediaDelivery
+				s3Config["retention_days"] = s3RetentionDays
+			} else {
+				if err != sql.ErrNoRows {
+					log.Warn().Err(err).Str("user_id", user.Id).Msg("Failed to query S3 config for user")
 				}
 			}
+			userMap["s3_config"] = s3Config
 			users = append(users, userMap)
 		}
 		// Check for any error that occurred during iteration
@@ -4215,9 +4756,12 @@ func (s *server) AddUser() http.HandlerFunc {
 			Events      string       `json:"events,omitempty"`
 			ProxyConfig *ProxyConfig `json:"proxyConfig,omitempty"`
 			S3Config    *S3Config    `json:"s3Config,omitempty"`
+			HmacKey     string       `json:"hmacKey,omitempty"`
+			History     int          `json:"history,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+			log.Error().Err(err).Msg("Failed to decode user payload")
 			s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"code":    http.StatusBadRequest,
 				"error":   "invalid request payload",
@@ -4241,6 +4785,32 @@ func (s *server) AddUser() http.HandlerFunc {
 		}
 		if user.Webhook == "" {
 			user.Webhook = ""
+		}
+
+		// Encrypt HMAC key if provided
+		var encryptedHmacKey []byte
+		if user.HmacKey != "" {
+			// Validate HMAC key length
+			if len(user.HmacKey) < 32 {
+				s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+					"code":    http.StatusBadRequest,
+					"error":   "HMAC key must be at least 32 characters long",
+					"success": false,
+				})
+				return
+			}
+
+			var err error
+			encryptedHmacKey, err = encryptHMACKey(user.HmacKey)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to encrypt HMAC key")
+				s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+					"code":    http.StatusInternalServerError,
+					"error":   "failed to encrypt HMAC key",
+					"success": false,
+				})
+				return
+			}
 		}
 
 		// Check for existing user
@@ -4292,11 +4862,11 @@ func (s *server) AddUser() http.HandlerFunc {
 			return
 		}
 
-		// Insert user with all proxy and S3 fields
+		// Insert user with all proxy, S3 and HMAC fields
 		if _, err = s.db.Exec(
-			"INSERT INTO users (id, name, token, webhook, expiration, events, jid, qrcode, proxy_url, s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_secret_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
+			"INSERT INTO users (id, name, token, webhook, expiration, events, jid, qrcode, proxy_url, s3_enabled, s3_endpoint, s3_region, s3_bucket, s3_access_key, s3_secret_key, s3_path_style, s3_public_url, media_delivery, s3_retention_days, hmac_key, history) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)",
 			id, user.Name, user.Token, user.Webhook, user.Expiration, user.Events, "", "", user.ProxyConfig.ProxyURL,
-			user.S3Config.Enabled, user.S3Config.Endpoint, user.S3Config.Region, user.S3Config.Bucket, user.S3Config.AccessKey, user.S3Config.SecretKey, user.S3Config.PathStyle, user.S3Config.PublicURL, user.S3Config.MediaDelivery, user.S3Config.RetentionDays,
+			user.S3Config.Enabled, user.S3Config.Endpoint, user.S3Config.Region, user.S3Config.Bucket, user.S3Config.AccessKey, user.S3Config.SecretKey, user.S3Config.PathStyle, user.S3Config.PublicURL, user.S3Config.MediaDelivery, user.S3Config.RetentionDays, encryptedHmacKey, user.History,
 		); err != nil {
 			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("admin DB error")
 			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
@@ -4349,10 +4919,237 @@ func (s *server) AddUser() http.HandlerFunc {
 			"events":       user.Events,
 			"proxy_config": proxyConfig,
 			"s3_config":    s3Config,
+			"hmac_key":     user.HmacKey != "",
 		}
 		s.respondWithJSON(w, http.StatusCreated, map[string]interface{}{
 			"code":    http.StatusCreated,
 			"data":    userMap,
+			"success": true,
+		})
+	}
+}
+
+// Edit user
+func (s *server) EditUser() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		type ProxyConfig struct {
+			Enabled  bool   `json:"enabled"`
+			ProxyURL string `json:"proxyURL"`
+		}
+
+		// Get the user ID from the request URL
+		vars := mux.Vars(r)
+		userID := vars["id"]
+
+		// Parse the request body
+		var user struct {
+			Name        string       `json:"name,omitempty"`
+			Token       string       `json:"token,omitempty"`
+			Webhook     string       `json:"webhook,omitempty"`
+			Expiration  int          `json:"expiration,omitempty"`
+			Events      string       `json:"events,omitempty"`
+			ProxyConfig *ProxyConfig `json:"proxyConfig,omitempty"`
+			S3Config    *S3Config    `json:"s3Config,omitempty"`
+			History     int          `json:"history,omitempty"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+			log.Error().Err(err).Msg("Failed to decode user payload")
+			s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"code":    http.StatusBadRequest,
+				"error":   "invalid request payload",
+				"success": false,
+			})
+			return
+		}
+
+		log.Info().Interface("proxyConfig", user.ProxyConfig).Interface("s3Config", user.S3Config).Msg("Received values for proxyConfig and s3Config")
+		log.Debug().Interface("user", user).Msg("Received values for user")
+
+		// Check if user exists
+		var count int
+		if err := s.db.Get(&count, "SELECT COUNT(*) FROM users WHERE id = $1", userID); err != nil {
+			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"code":    http.StatusInternalServerError,
+				"error":   "database error",
+				"success": false,
+			})
+			return
+		}
+		if count == 0 {
+			s.respondWithJSON(w, http.StatusNotFound, map[string]interface{}{
+				"code":    http.StatusNotFound,
+				"error":   "user not found",
+				"success": false,
+			})
+			return
+		}
+
+		// Validate events if provided
+		if user.Events != "" {
+			eventList := strings.Split(user.Events, ",")
+			for _, event := range eventList {
+				event = strings.TrimSpace(event)
+				if event == "" {
+					continue // allow empty
+				}
+				if !Find(supportedEventTypes, event) {
+					s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+						"code":    http.StatusBadRequest,
+						"error":   "invalid event type",
+						"success": false,
+						"details": "invalid event: " + event,
+					})
+					return
+				}
+			}
+		}
+
+		// Build dynamic UPDATE query based on provided fields
+		query := "UPDATE users SET "
+		args := []interface{}{}
+		argIndex := 1
+
+		// Helper function to add field to query if provided
+		addField := func(fieldName string, value interface{}, condition bool) {
+			if condition {
+				if argIndex > 1 {
+					query += ", "
+				}
+				query += fieldName + " = $" + strconv.Itoa(argIndex)
+				args = append(args, value)
+				argIndex++
+			}
+		}
+
+		// Add fields to update
+		addField("name", user.Name, user.Name != "")
+		addField("token", user.Token, user.Token != "")
+		addField("webhook", user.Webhook, user.Webhook != "")
+		addField("expiration", user.Expiration, user.Expiration != 0)
+		addField("events", user.Events, user.Events != "")
+		addField("history", user.History, user.History != 0)
+
+		// Handle proxy config
+		if user.ProxyConfig != nil {
+			if user.ProxyConfig.Enabled {
+				addField("proxy_url", user.ProxyConfig.ProxyURL, true)
+			} else {
+				addField("proxy_url", "", true)
+			}
+		}
+
+		// Handle S3 config
+		if user.S3Config != nil {
+			addField("s3_enabled", user.S3Config.Enabled, true)
+			addField("s3_endpoint", user.S3Config.Endpoint, true)
+			addField("s3_region", user.S3Config.Region, true)
+			addField("s3_bucket", user.S3Config.Bucket, true)
+			addField("s3_access_key", user.S3Config.AccessKey, true)
+			addField("s3_secret_key", user.S3Config.SecretKey, true)
+			addField("s3_path_style", user.S3Config.PathStyle, true)
+			addField("s3_public_url", user.S3Config.PublicURL, true)
+			addField("media_delivery", user.S3Config.MediaDelivery, true)
+			addField("s3_retention_days", user.S3Config.RetentionDays, true)
+		}
+
+		// If no fields to update, return early
+		if argIndex == 1 {
+			s.respondWithJSON(w, http.StatusBadRequest, map[string]interface{}{
+				"code":    http.StatusBadRequest,
+				"error":   "no fields to update",
+				"success": false,
+			})
+			return
+		}
+
+		// Add WHERE clause
+		query += " WHERE id = $" + strconv.Itoa(argIndex)
+		args = append(args, userID)
+
+		// Execute the update
+		if _, err := s.db.Exec(query, args...); err != nil {
+			log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("admin DB error")
+			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"code":    http.StatusInternalServerError,
+				"error":   "database error",
+				"success": false,
+			})
+			return
+		}
+
+		// Update S3Manager if S3 config was modified
+		if user.S3Config != nil {
+			if user.S3Config.Enabled {
+				s3Config := &S3Config{
+					Enabled:       user.S3Config.Enabled,
+					Endpoint:      user.S3Config.Endpoint,
+					Region:        user.S3Config.Region,
+					Bucket:        user.S3Config.Bucket,
+					AccessKey:     user.S3Config.AccessKey,
+					SecretKey:     user.S3Config.SecretKey,
+					PathStyle:     user.S3Config.PathStyle,
+					PublicURL:     user.S3Config.PublicURL,
+					MediaDelivery: user.S3Config.MediaDelivery,
+					RetentionDays: user.S3Config.RetentionDays,
+				}
+				_ = GetS3Manager().InitializeS3Client(userID, s3Config)
+			} else {
+				// Remove S3 client if disabled
+				GetS3Manager().RemoveClient(userID)
+			}
+		}
+
+		// Update userinfo cache for any modified fields
+		// First, get the current user token to find the cache entry
+		var currentToken string
+		err := s.db.Get(&currentToken, "SELECT token FROM users WHERE id = $1", userID)
+		if err != nil {
+			log.Error().Err(err).Str("userID", userID).Msg("Failed to get user token for cache update")
+		} else {
+			// Get current cached userinfo if it exists
+			if cachedUserInfo, found := userinfocache.Get(currentToken); found {
+				updatedUserInfo := cachedUserInfo.(Values)
+
+				// Update cache fields that were modified
+				if user.Name != "" {
+					updatedUserInfo = updateUserInfo(updatedUserInfo, "Name", user.Name).(Values)
+				}
+				if user.Token != "" {
+					// If token changed, we need to update the cache key
+					updatedUserInfo = updateUserInfo(updatedUserInfo, "Token", user.Token).(Values)
+					// Remove old cache entry and add new one with new token
+					userinfocache.Delete(currentToken)
+					currentToken = user.Token
+				}
+				if user.Webhook != "" {
+					updatedUserInfo = updateUserInfo(updatedUserInfo, "Webhook", user.Webhook).(Values)
+				}
+				if user.Events != "" {
+					updatedUserInfo = updateUserInfo(updatedUserInfo, "Events", user.Events).(Values)
+				}
+				if user.History != 0 {
+					updatedUserInfo = updateUserInfo(updatedUserInfo, "History", strconv.Itoa(user.History)).(Values)
+				}
+				if user.ProxyConfig != nil {
+					if user.ProxyConfig.Enabled {
+						updatedUserInfo = updateUserInfo(updatedUserInfo, "Proxy", user.ProxyConfig.ProxyURL).(Values)
+					} else {
+						updatedUserInfo = updateUserInfo(updatedUserInfo, "Proxy", "").(Values)
+					}
+				}
+
+				// Update the cache
+				userinfocache.Set(currentToken, updatedUserInfo, cache.NoExpiration)
+				log.Info().Str("userID", userID).Msg("User info cache updated after edit")
+			}
+		}
+
+		s.respondWithJSON(w, http.StatusOK, map[string]interface{}{
+			"code":    http.StatusOK,
+			"message": "user updated successfully",
 			"success": true,
 		})
 	}
@@ -4575,6 +5372,65 @@ func validateMessageFields(phone string, stanzaid *string, participant *string) 
 	return recipient, nil
 }
 
+// Set history
+func (s *server) SetHistory() http.HandlerFunc {
+	type historyStruct struct {
+		History int `json:"history"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		// Check if client exists and is connected
+
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("no session"))
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var t historyStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
+			return
+		}
+
+		// Validate history value
+		if t.History < 0 {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("history cannot be negative"))
+			return
+		}
+
+		// Store history configuration in database
+		_, err = s.db.Exec("UPDATE users SET history = $1 WHERE id = $2", t.History, txtid)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save history configuration"))
+			return
+		}
+
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			// Update history in cache
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "History", strconv.Itoa(t.History)).(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated with History configuration")
+		}
+
+		response := map[string]interface{}{
+			"Details": "History configured successfully",
+			"History": t.History,
+		}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}
+
 // Set proxy
 func (s *server) SetProxy() http.HandlerFunc {
 	type proxyStruct struct {
@@ -4602,10 +5458,19 @@ func (s *server) SetProxy() http.HandlerFunc {
 
 		// If enable is false, remove proxy configuration
 		if !t.Enable {
-			_, err = s.db.Exec("UPDATE users SET proxy_url = NULL WHERE id = $1", txtid)
+			_, err = s.db.Exec("UPDATE users SET proxy_url = '' WHERE id = $1", txtid)
 			if err != nil {
 				s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to remove proxy configuration"))
 				return
+			}
+
+			token := r.Context().Value("userinfo").(Values).Get("Token")
+			if cachedUserInfo, found := userinfocache.Get(token); found {
+				updatedUserInfo := cachedUserInfo.(Values)
+				// Update proxy in cache
+				updatedUserInfo = updateUserInfo(updatedUserInfo, "Proxy", "").(Values)
+				userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+				log.Info().Str("userID", txtid).Msg("User info cache updated with Proxy configuration")
 			}
 
 			response := map[string]interface{}{"Details": "Proxy disabled successfully"}
@@ -4641,6 +5506,15 @@ func (s *server) SetProxy() http.HandlerFunc {
 		if err != nil {
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save proxy configuration"))
 			return
+		}
+
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			// Update proxy in cache
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "Proxy", t.ProxyURL).(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated with Proxy configuration")
 		}
 
 		response := map[string]interface{}{
@@ -4737,6 +5611,27 @@ func (s *server) ConfigureS3() http.HandlerFunc {
 			GetS3Manager().RemoveClient(txtid)
 		}
 
+		// Update userinfocache with S3 configuration
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+
+			// Update S3-related fields in cache
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3Enabled", strconv.FormatBool(t.Enabled)).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3Endpoint", t.Endpoint).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3Region", t.Region).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3Bucket", t.Bucket).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3AccessKey", t.AccessKey).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3SecretKey", t.SecretKey).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3PathStyle", strconv.FormatBool(t.PathStyle)).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3PublicURL", t.PublicURL).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "MediaDelivery", t.MediaDelivery).(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "S3RetentionDays", strconv.Itoa(t.RetentionDays)).(Values)
+
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated with S3 configuration")
+		}
+
 		response := map[string]interface{}{
 			"Details": "S3 configuration saved successfully",
 			"Enabled": t.Enabled,
@@ -4756,15 +5651,15 @@ func (s *server) GetS3Config() http.HandlerFunc {
 		txtid := r.Context().Value("userinfo").(Values).Get("Id")
 
 		var config struct {
-			Enabled       bool   `json:"enabled"`
-			Endpoint      string `json:"endpoint"`
-			Region        string `json:"region"`
-			Bucket        string `json:"bucket"`
-			AccessKey     string `json:"access_key"`
-			PathStyle     bool   `json:"path_style"`
-			PublicURL     string `json:"public_url"`
-			MediaDelivery string `json:"media_delivery"`
-			RetentionDays int    `json:"retention_days"`
+			Enabled       bool   `json:"enabled" db:"enabled"`
+			Endpoint      string `json:"endpoint" db:"endpoint"`
+			Region        string `json:"region" db:"region"`
+			Bucket        string `json:"bucket" db:"bucket"`
+			AccessKey     string `json:"access_key" db:"access_key"`
+			PathStyle     bool   `json:"path_style" db:"path_style"`
+			PublicURL     string `json:"public_url" db:"public_url"`
+			MediaDelivery string `json:"media_delivery" db:"media_delivery"`
+			RetentionDays int    `json:"retention_days" db:"retention_days"`
 		}
 
 		err := s.db.Get(&config, `
@@ -4781,9 +5676,12 @@ func (s *server) GetS3Config() http.HandlerFunc {
 			FROM users WHERE id = $1`, txtid)
 
 		if err != nil {
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to get S3 configuration from database")
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to get S3 configuration"))
 			return
 		}
+
+		log.Debug().Str("userID", txtid).Bool("enabled", config.Enabled).Str("endpoint", config.Endpoint).Str("bucket", config.Bucket).Msg("Retrieved S3 configuration from database")
 
 		// Don't return secret key for security
 		config.AccessKey = "***" // Mask access key
@@ -4804,15 +5702,15 @@ func (s *server) TestS3Connection() http.HandlerFunc {
 
 		// Get S3 config from database
 		var config struct {
-			Enabled       bool
-			Endpoint      string
-			Region        string
-			Bucket        string
-			AccessKey     string
-			SecretKey     string
-			PathStyle     bool
-			PublicURL     string
-			RetentionDays int
+			Enabled       bool   `db:"enabled"`
+			Endpoint      string `db:"endpoint"`
+			Region        string `db:"region"`
+			Bucket        string `db:"bucket"`
+			AccessKey     string `db:"access_key"`
+			SecretKey     string `db:"secret_key"`
+			PathStyle     bool   `db:"path_style"`
+			PublicURL     string `db:"public_url"`
+			RetentionDays int    `db:"retention_days"`
 		}
 
 		err := s.db.Get(&config, `
@@ -4821,17 +5719,20 @@ func (s *server) TestS3Connection() http.HandlerFunc {
 				s3_endpoint as endpoint,
 				s3_region as region,
 				s3_bucket as bucket,
-				s3_access_key as accesskey,
-				s3_secret_key as secretkey,
-				s3_path_style as pathstyle,
-				s3_public_url as publicurl,
-				s3_retention_days as retentiondays
+				s3_access_key as access_key,
+				s3_secret_key as secret_key,
+				s3_path_style as path_style,
+				s3_public_url as public_url,
+				s3_retention_days as retention_days
 			FROM users WHERE id = $1`, txtid)
 
 		if err != nil {
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to get S3 configuration from database for test connection")
 			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to get S3 configuration"))
 			return
 		}
+
+		log.Debug().Str("userID", txtid).Bool("enabled", config.Enabled).Str("endpoint", config.Endpoint).Str("bucket", config.Bucket).Msg("Retrieved S3 configuration from database for test connection")
 
 		if !config.Enabled {
 			s.Respond(w, r, http.StatusBadRequest, errors.New("S3 is not enabled for this user"))
@@ -4916,5 +5817,744 @@ func (s *server) DeleteS3Config() http.HandlerFunc {
 		} else {
 			s.Respond(w, r, http.StatusOK, string(responseJson))
 		}
+	}
+}
+
+// Get chat history
+func (s *server) GetHistory() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		historyStr := r.Context().Value("userinfo").(Values).Get("History")
+		historyLimit, _ := strconv.Atoi(historyStr)
+
+		// Debug logging
+		log.Info().Str("userId", txtid).Str("historyStr", historyStr).Int("historyLimit", historyLimit).Msg("GetHistory debug info")
+
+		if historyLimit == 0 {
+			// Before returning error, try refreshing the cache in case the DB was updated
+			token := r.Context().Value("userinfo").(Values).Get("Token")
+			log.Info().Str("userId", txtid).Str("token", token).Msg("History is 0, invalidating cache and trying fresh DB lookup")
+			userinfocache.Delete(token)
+
+			// Re-fetch from database
+			var newHistoryValue sql.NullInt64
+			err := s.db.QueryRow("SELECT COALESCE(history, 0) FROM users WHERE id = $1", txtid).Scan(&newHistoryValue)
+			if err != nil {
+				log.Error().Err(err).Str("userId", txtid).Msg("Failed to fetch history from database")
+			} else {
+				newHistoryLimit := int(newHistoryValue.Int64)
+				log.Info().Str("userId", txtid).Int("newHistoryLimit", newHistoryLimit).Msg("Fresh DB lookup result")
+				if newHistoryLimit > 0 {
+					// Update the context for this request
+					historyLimit = newHistoryLimit
+					log.Info().Str("userId", txtid).Int("historyLimit", historyLimit).Msg("Using fresh history value from DB")
+				}
+			}
+
+			if historyLimit == 0 {
+				s.Respond(w, r, http.StatusNotImplemented, errors.New("message history is disabled for this user"))
+				return
+			}
+		}
+		chatJID := r.URL.Query().Get("chat_jid")
+		if chatJID == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("chat_jid is required"))
+			return
+		}
+
+		// If chat_jid is "index", return mapping of all instances to their chat_jids
+		if chatJID == "index" {
+			var query string
+			if s.db.DriverName() == "postgres" {
+				query = `
+					SELECT user_id, chat_jid, MAX(timestamp) as last_message_time
+					FROM message_history 
+					GROUP BY user_id, chat_jid 
+					ORDER BY user_id, last_message_time DESC`
+			} else { // sqlite
+				query = `
+					SELECT user_id, chat_jid, MAX(timestamp) as last_message_time
+					FROM message_history 
+					GROUP BY user_id, chat_jid 
+					ORDER BY user_id, last_message_time DESC`
+			}
+
+			type ChatMapping struct {
+				UserID          string `json:"user_id" db:"user_id"`
+				ChatJID         string `json:"chat_jid" db:"chat_jid"`
+				LastMessageTime string `json:"last_message_time" db:"last_message_time"`
+			}
+
+			var mappings []ChatMapping
+			err := s.db.Select(&mappings, query)
+			if err != nil {
+				s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to get chat mappings: %w", err))
+				return
+			}
+
+			// Build the response map with chats ordered by most recent message
+			type ChatInfo struct {
+				ChatJID     string `json:"chat_jid"`
+				LastUpdated string `json:"last_updated"`
+			}
+
+			result := make(map[string][]ChatInfo)
+			for _, mapping := range mappings {
+				// Parse the timestamp and format it properly to remove monotonic clock info
+				var formattedTime string
+				if parsedTime, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", mapping.LastMessageTime); err == nil {
+					formattedTime = parsedTime.Format(time.RFC3339Nano)
+				} else if parsedTime, err := time.Parse(time.RFC3339Nano, mapping.LastMessageTime); err == nil {
+					formattedTime = parsedTime.Format(time.RFC3339Nano)
+				} else {
+					// If parsing fails, clean up the monotonic clock part manually
+					formattedTime = strings.Split(mapping.LastMessageTime, " m=")[0]
+				}
+
+				chatInfo := ChatInfo{
+					ChatJID:     mapping.ChatJID,
+					LastUpdated: formattedTime,
+				}
+				result[mapping.UserID] = append(result[mapping.UserID], chatInfo)
+			}
+
+			responseJson, err := json.Marshal(result)
+			if err != nil {
+				s.Respond(w, r, http.StatusInternalServerError, err)
+			} else {
+				s.Respond(w, r, http.StatusOK, string(responseJson))
+			}
+			return
+		}
+
+		limitStr := r.URL.Query().Get("limit")
+		limit := 50 // Default limit
+		if limitStr != "" {
+			var err error
+			limit, err = strconv.Atoi(limitStr)
+			if err != nil {
+				s.Respond(w, r, http.StatusBadRequest, errors.New("invalid limit"))
+				return
+			}
+		}
+
+		var query string
+		if s.db.DriverName() == "postgres" {
+			query = `
+                SELECT id, user_id, chat_jid, sender_jid, message_id, timestamp, message_type, text_content, media_link, COALESCE(quoted_message_id, '') as quoted_message_id, COALESCE(datajson, '') as datajson
+                FROM message_history
+                WHERE user_id = $1 AND chat_jid = $2
+                ORDER BY timestamp DESC
+                LIMIT $3`
+		} else { // sqlite
+			query = `
+                SELECT id, user_id, chat_jid, sender_jid, message_id, timestamp, message_type, text_content, media_link, COALESCE(quoted_message_id, '') as quoted_message_id, COALESCE(datajson, '') as datajson
+                FROM message_history
+                WHERE user_id = ? AND chat_jid = ?
+                ORDER BY timestamp DESC
+                LIMIT ?`
+		}
+
+		var messages []HistoryMessage
+		err := s.db.Select(&messages, query, txtid, chatJID, limit)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, fmt.Errorf("failed to get message history: %w", err))
+			return
+		}
+
+		responseJson, err := json.Marshal(messages)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}
+
+// syncHistoryForChat syncs history for a specific chat
+func (s *server) syncHistoryForChat(ctx context.Context, userID string, chatJID types.JID, count int) error {
+	chatJIDStr := chatJID.String()
+
+	// Try to get last message info for this chat from database
+	var query string
+	if s.db.DriverName() == "postgres" {
+		query = `
+			SELECT message_id, chat_jid, sender_jid
+			FROM message_history
+			WHERE user_id = $1 AND chat_jid = $2
+			ORDER BY timestamp DESC
+			LIMIT 1`
+	} else {
+		query = `
+			SELECT message_id, chat_jid, sender_jid
+			FROM message_history
+			WHERE user_id = ? AND chat_jid = ?
+			ORDER BY timestamp DESC
+			LIMIT 1`
+	}
+
+	var lastMsg struct {
+		MessageID string `db:"message_id"`
+		ChatJID   string `db:"chat_jid"`
+		SenderJID string `db:"sender_jid"`
+	}
+
+	var lastMessageInfo *types.MessageInfo
+	err := s.db.Get(&lastMsg, query, userID, chatJIDStr)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to get last message from history: %w", err)
+	}
+
+	if err == nil && lastMsg.MessageID != "" {
+		// Parse sender JID
+		var senderJID types.JID
+		if lastMsg.SenderJID != "" && lastMsg.SenderJID != "me" {
+			var pErr error
+			senderJID, pErr = types.ParseJID(lastMsg.SenderJID)
+			if pErr != nil {
+				log.Warn().Err(pErr).Str("senderJID", lastMsg.SenderJID).Msg("Failed to parse sender JID from history, using empty JID")
+				senderJID = types.EmptyJID
+			}
+		} else {
+			senderJID = types.EmptyJID
+		}
+
+		// MessageInfo embeds MessageSource which contains Chat, Sender, IsGroup
+		lastMessageInfo = &types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:    chatJID,
+				Sender:  senderJID,
+				IsGroup: chatJID.Server == types.GroupServer || chatJID.Server == types.BroadcastServer,
+			},
+			ID: lastMsg.MessageID,
+		}
+	} else {
+		// If no last message found, create MessageInfo with just the chat
+		lastMessageInfo = &types.MessageInfo{
+			MessageSource: types.MessageSource{
+				Chat:    chatJID,
+				IsGroup: chatJID.Server == types.GroupServer || chatJID.Server == types.BroadcastServer,
+			},
+		}
+	}
+
+	// Build history sync request
+	historyMsg := clientManager.GetWhatsmeowClient(userID).BuildHistorySyncRequest(lastMessageInfo, count)
+	if historyMsg == nil {
+		return errors.New("failed to build history sync request")
+	}
+
+	// Send the history sync request
+	myClient := clientManager.GetMyClient(userID)
+	if myClient == nil || myClient.WAClient == nil || myClient.WAClient.Store == nil || myClient.WAClient.Store.ID == nil {
+		return errors.New("client store not available")
+	}
+
+	_, err = clientManager.GetWhatsmeowClient(userID).SendMessage(
+		ctx,
+		myClient.WAClient.Store.ID.ToNonAD(),
+		historyMsg,
+		whatsmeow.SendRequestExtra{Peer: true},
+	)
+
+	if err != nil {
+		log.Error().
+			Str("userID", userID).
+			Str("chatJID", chatJIDStr).
+			Err(err).
+			Msg("Failed to send WhatsApp history sync request")
+		return fmt.Errorf("failed to send history sync request: %w", err)
+	}
+
+	log.Info().
+		Str("userID", userID).
+		Str("chatJID", chatJIDStr).
+		Int("count", count).
+		Msg("WhatsApp history sync request sent successfully")
+
+	return nil
+}
+
+// save outgoing message to history
+func (s *server) saveOutgoingMessageToHistory(userID, chatJID, messageID, messageType, textContent, mediaLink string, historyLimit int) {
+	if historyLimit > 0 {
+		err := s.saveMessageToHistory(userID, chatJID, "me", messageID, messageType, textContent, mediaLink, "", "")
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to save outgoing message to history")
+		} else {
+			err = s.trimMessageHistory(userID, chatJID, historyLimit)
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to trim message history")
+			}
+		}
+	}
+}
+
+// Configure HMAC
+func (s *server) ConfigureHmac() http.HandlerFunc {
+	type hmacConfigStruct struct {
+		HmacKey string `json:"hmac_key"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token")
+
+		decoder := json.NewDecoder(r.Body)
+		var t hmacConfigStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode payload"))
+			return
+		}
+
+		// Validate HMAC key (minimum 32 characters for security)
+		if len(t.HmacKey) < 32 {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("HMAC key must be at least 32 characters long"))
+			return
+		}
+
+		// Encrypt HMAC key before storing
+		encryptedHmacKey, err := encryptHMACKey(t.HmacKey)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to encrypt HMAC key")
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to encrypt HMAC key"))
+			return
+		}
+
+		// Update database with ENCRYPTED key
+		_, err = s.db.Exec(`
+            UPDATE users SET hmac_key = $1 WHERE id = $2`,
+			encryptedHmacKey, txtid)
+
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("failed to save HMAC configuration"))
+			return
+		}
+
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HasHmac", "true").(Values)
+			hmacKeyEncrypted := base64.StdEncoding.EncodeToString(encryptedHmacKey)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HmacKeyEncrypted", hmacKeyEncrypted).(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated with HMAC configuration")
+		}
+
+		response := map[string]interface{}{
+			"Details": "HMAC configuration saved successfully",
+		}
+		s.respondWithJSON(w, http.StatusOK, response)
+	}
+}
+
+// Get HMAC Configuration
+func (s *server) GetHmacConfig() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		var hmacKey []byte
+		err := s.db.QueryRow(`SELECT hmac_key FROM users WHERE id = $1`, txtid).Scan(&hmacKey)
+
+		if err != nil {
+			if err == sql.ErrNoRows {
+				s.respondWithJSON(w, http.StatusOK, map[string]interface{}{
+					"hmac_key": "",
+				})
+				return
+			}
+
+			log.Error().Err(err).Str("userID", txtid).Msg("Failed to get HMAC configuration from database")
+			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"error": "failed to get HMAC configuration",
+			})
+			return
+		}
+
+		log.Debug().Str("userID", txtid).Bool("hasKey", len(hmacKey) > 0).Msg("Retrieved HMAC configuration from database")
+
+		response := map[string]interface{}{
+			"hmac_key": "",
+		}
+
+		if len(hmacKey) > 0 {
+			response["hmac_key"] = "***" // Mask HMAC key
+		}
+
+		s.respondWithJSON(w, http.StatusOK, response)
+	}
+}
+
+// Delete HMAC Configuration
+func (s *server) DeleteHmacConfig() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+		token := r.Context().Value("userinfo").(Values).Get("Token") // ← Pegar o token
+
+		// Clear HMAC key
+		_, err := s.db.Exec(`UPDATE users SET hmac_key = NULL WHERE id = $1`, txtid)
+
+		if err != nil {
+			s.respondWithJSON(w, http.StatusInternalServerError, map[string]interface{}{
+				"error": "failed to delete HMAC configuration",
+			})
+			return
+		}
+
+		if cachedUserInfo, found := userinfocache.Get(token); found {
+			updatedUserInfo := cachedUserInfo.(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HasHmac", "false").(Values)
+			updatedUserInfo = updateUserInfo(updatedUserInfo, "HmacKeyEncrypted", "").(Values)
+			userinfocache.Set(token, updatedUserInfo, cache.NoExpiration)
+			log.Info().Str("userID", txtid).Msg("User info cache updated - HMAC configuration removed")
+		}
+
+		s.respondWithJSON(w, http.StatusOK, map[string]interface{}{
+			"Details": "HMAC configuration deleted successfully",
+		})
+	}
+}
+
+// RejectCall rejects an incoming call
+func (s *server) RejectCall() http.HandlerFunc {
+
+	type rejectCallStruct struct {
+		CallFrom string `json:"call_from"`
+		CallID   string `json:"call_id"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var t rejectCallStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
+			return
+		}
+
+		if t.CallFrom == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing call_from in Payload"))
+			return
+		}
+
+		if t.CallID == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing call_id in Payload"))
+			return
+		}
+
+		callFrom, ok := parseJID(t.CallFrom)
+		if !ok {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not parse call_from"))
+			return
+		}
+
+		err = clientManager.GetWhatsmeowClient(txtid).RejectCall(context.Background(), callFrom, t.CallID)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("error rejecting call: %v", err)))
+			return
+		}
+
+		log.Info().Str("call_id", t.CallID).Str("call_from", t.CallFrom).Msg("Call rejected")
+		response := map[string]interface{}{"Details": "Call rejected", "CallID": t.CallID}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+		return
+	}
+}
+
+// GetUserLID retrieves the Local ID (LID) for a given JID/Phone Number
+func (s *server) GetUserLID() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		// Get JID from URL parameter
+		vars := mux.Vars(r)
+		jidParam := vars["jid"]
+
+		if jidParam == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing jid parameter"))
+			return
+		}
+
+		// Parse the JID (phone number)
+		jid, ok := parseJID(jidParam)
+		if !ok {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("invalid jid format"))
+			return
+		}
+
+		client := clientManager.GetWhatsmeowClient(txtid)
+
+		// Get the LID for this phone number from the store
+		lid, err := client.Store.LIDs.GetLIDForPN(context.Background(), jid)
+		if err != nil {
+			log.Error().Err(err).Str("jid", jidParam).Msg("Failed to get LID for phone number")
+			s.Respond(w, r, http.StatusNotFound, errors.New(fmt.Sprintf("LID not found for this number: %v", err)))
+			return
+		}
+
+		if lid.IsEmpty() {
+			s.Respond(w, r, http.StatusNotFound, errors.New("LID not found for this number"))
+			return
+		}
+
+		// Return the LID
+		response := map[string]interface{}{
+			"jid": jid.String(),
+			"lid": lid.String(),
+		}
+
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}
+
+// RequestUnavailableMessage requests a copy of a message that couldn't be decrypted
+func (s *server) RequestUnavailableMessage() http.HandlerFunc {
+
+	type requestUnavailableMessageStruct struct {
+		Chat   string `json:"chat"`   // Chat JID (e.g., "5511999999999@s.whatsapp.net" or "120363123456789012@g.us")
+		Sender string `json:"sender"` // Sender JID (e.g., "5511999999999@s.whatsapp.net")
+		ID     string `json:"id"`     // Message ID
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		client := clientManager.GetWhatsmeowClient(txtid)
+
+		if client == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var t requestUnavailableMessageStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
+			return
+		}
+
+		// Validate required fields
+		if t.Chat == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Chat in Payload"))
+			return
+		}
+
+		if t.Sender == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing Sender in Payload"))
+			return
+		}
+
+		if t.ID == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing ID in Payload"))
+			return
+		}
+
+		// Parse JIDs
+		chatJID, err := types.ParseJID(t.Chat)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("invalid Chat JID format"))
+			return
+		}
+
+		senderJID, err := types.ParseJID(t.Sender)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("invalid Sender JID format"))
+			return
+		}
+
+		// Build the unavailable message request
+		unavailableMessage := client.BuildUnavailableMessageRequest(chatJID, senderJID, t.ID)
+
+		// Send the request with Peer: true as required by the documentation
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		resp, err := client.SendMessage(ctx, chatJID, unavailableMessage, whatsmeow.SendRequestExtra{Peer: true})
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to send unavailable message request: %s", err)))
+			return
+		}
+
+		response := map[string]interface{}{
+			"success":    true,
+			"message":    "Unavailable message request sent successfully",
+			"request_id": resp.ID,
+			"chat":       t.Chat,
+			"sender":     t.Sender,
+			"message_id": t.ID,
+			"timestamp":  resp.Timestamp.Unix(),
+		}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+}
+
+func (s *server) ArchiveChat() http.HandlerFunc {
+
+	type requestArchiveStruct struct {
+		Jid     string `json:"jid"`
+		Archive bool   `json:"archive"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		client := clientManager.GetWhatsmeowClient(txtid)
+
+		if client == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var t requestArchiveStruct
+		err := decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
+			return
+		}
+
+		// Validate required fields
+		if t.Jid == "" {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("missing jid in Payload"))
+			return
+		}
+
+		chatJID, err := types.ParseJID(t.Jid)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("invalid Chat JID format"))
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		err = client.SendAppState(ctx, appstate.BuildArchive(chatJID, t.Archive, time.Time{}, nil))
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("failed to archive chat: %s", err)))
+			return
+		}
+		statusText := "Chat archived"
+		if !t.Archive {
+			statusText = "Chat unarchived"
+		}
+		response := map[string]interface{}{
+			"success": true,
+			"message": statusText,
+		}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+	}
+
+}
+
+// Downloads Sticker and returns base64 representation
+func (s *server) DownloadSticker() http.HandlerFunc {
+
+	type downloadStickerStruct struct {
+		Url           string
+		DirectPath    string
+		MediaKey      []byte
+		Mimetype      string
+		FileEncSHA256 []byte
+		FileSHA256    []byte
+		FileLength    uint64
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		txtid := r.Context().Value("userinfo").(Values).Get("Id")
+
+		mimetype := ""
+		var stickerdata []byte
+
+		if clientManager.GetWhatsmeowClient(txtid) == nil {
+			s.Respond(w, r, http.StatusInternalServerError, errors.New("no session"))
+			return
+		}
+
+		// check/creates user directory for files
+		userDirectory := filepath.Join(s.exPath, "files", "user_"+txtid)
+		_, err := os.Stat(userDirectory)
+		if os.IsNotExist(err) {
+			errDir := os.MkdirAll(userDirectory, 0751)
+			if errDir != nil {
+				s.Respond(w, r, http.StatusInternalServerError, errors.New(fmt.Sprintf("could not create user directory (%s)", userDirectory)))
+				return
+			}
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var t downloadStickerStruct
+		err = decoder.Decode(&t)
+		if err != nil {
+			s.Respond(w, r, http.StatusBadRequest, errors.New("could not decode Payload"))
+			return
+		}
+
+		msg := &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
+			URL:           proto.String(t.Url),
+			DirectPath:    proto.String(t.DirectPath),
+			MediaKey:      t.MediaKey,
+			Mimetype:      proto.String(t.Mimetype),
+			FileEncSHA256: t.FileEncSHA256,
+			FileSHA256:    t.FileSHA256,
+			FileLength:    &t.FileLength,
+		}}
+
+		sticker := msg.GetStickerMessage()
+
+		if sticker != nil {
+			stickerdata, err = clientManager.GetWhatsmeowClient(txtid).Download(context.Background(), sticker)
+			if err != nil {
+				log.Error().Str("error", fmt.Sprintf("%v", err)).Msg("failed to download sticker")
+				msg := fmt.Sprintf("failed to download sticker %v", err)
+				s.Respond(w, r, http.StatusInternalServerError, errors.New(msg))
+				return
+			}
+			mimetype = sticker.GetMimetype()
+		}
+
+		dataURL := dataurl.New(stickerdata, mimetype)
+		response := map[string]interface{}{"Mimetype": mimetype, "Data": dataURL.String()}
+		responseJson, err := json.Marshal(response)
+		if err != nil {
+			s.Respond(w, r, http.StatusInternalServerError, err)
+		} else {
+			s.Respond(w, r, http.StatusOK, string(responseJson))
+		}
+		return
 	}
 }

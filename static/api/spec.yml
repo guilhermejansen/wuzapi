@@ -13,6 +13,80 @@ servers:
     description: Current host
 
 paths:
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check
+      description: Endpoint to verify if the API is running correctly and retrieve service statistics.
+      responses:
+        200:
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                    description: Overall service status
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2025-01-15T10:30:00Z"
+                    description: Current timestamp
+                  uptime:
+                    type: string
+                    example: "24h15m30s"
+                    description: Time the service has been running
+                  active_connections:
+                    type: integer
+                    example: 5
+                    description: Total number of active managed connections
+                  total_users:
+                    type: integer
+                    example: 10
+                    description: Total number of registered users
+                  connected_users:
+                    type: integer
+                    example: 4
+                    description: Number of users connected to WhatsApp
+                  logged_in_users:
+                    type: integer
+                    example: 3
+                    description: Number of users logged into WhatsApp
+                  memory_stats:
+                    type: object
+                    description: Memory usage statistics
+                    properties:
+                      alloc_mb:
+                        type: integer
+                        example: 45
+                        description: Currently allocated memory in MB
+                      total_alloc_mb:
+                        type: integer
+                        example: 250
+                        description: Total memory allocated since startup in MB
+                      sys_mb:
+                        type: integer
+                        example: 72
+                        description: Memory obtained from the system in MB
+                      num_gc:
+                        type: integer
+                        example: 15
+                        description: Number of garbage collection cycles
+                  goroutines:
+                    type: integer
+                    example: 42
+                    description: Number of running goroutines
+                  version:
+                    type: string
+                    example: "3.0.0"
+                    description: API version (optional)
+                required:
+                  - status
+                  - timestamp
   /admin/users:
     get:
       tags:
@@ -69,7 +143,30 @@ paths:
                     public_url: "https://s3.amazonaws.com"
                     media_delivery: "both"
                     retention_days: 30
+                  history: 0
   /admin/users/{id}:
+    get:
+      tags:
+        - Admin
+      summary: List users
+      description: Retrieve a list of users from the database, displaying also connection status and other info.
+      security:
+        - AdminAuth: [ ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID of the user to request
+          schema:
+            type: string
+            example: 4e4942c7dee1deef99ab8fd9f7350de5
+      responses:
+        200:
+          description: A JSON array of user objects
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": [ { "connected": true, "events": "All", "expiration": 0, "id": "bec45bb93cbd24cbec32941ec3c93a12", "jid": "5491155551122:12@s.whatsapp.net", "loggedIn": true, "name": "Some User", "proxy_url": "", "qrcode": "", "token": "d030sl9aDL39sl3075zz", "webhook": "https://some.domain/webhook" } ], "success": true }
     delete:
       tags:
         - Admin
@@ -463,6 +560,175 @@ paths:
           description: S3 is not enabled or configuration error
         500:
           description: S3 connection test failed
+  /session/history:
+    get:
+      tags:
+        - Session
+      summary: Request history sync
+      description: Requests WhatsApp to sync message history for the connected session. Supports query parameters to customize the sync request.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: count
+          in: query
+          description: Number of messages to sync (default 50)
+          required: false
+          schema:
+              type: integer
+              minimum: 1
+              maximum: 1000
+              example: 50
+        - name: chat_jid
+          in: query
+          description: JID of the chat to sync history for (e.g., 120363313346913103@g.us for groups or 5521971532700@s.whatsapp.net for DMs)
+          required: false
+          schema:
+            type: string
+            example: 120363313346913103@g.us
+        - name: oldest_msg_id
+          in: query
+          description: Message ID of the oldest message to start sync from
+          required: false
+          schema:
+            type: string
+            example: ABC123DEF456
+        - name: oldest_msg_from_me
+          in: query
+          description: Whether the oldest message was sent by the current user
+          required: false
+          schema:
+            type: boolean
+            example: true
+        - name: oldest_msg_timestamp
+          in: query
+          description: Timestamp of the oldest message in milliseconds
+          required: false
+          schema:
+            type: integer
+            example: 1640995200000
+      responses:
+        '200':
+          description: History sync requested successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      details:
+                        type: string
+                        example: 'History sync request Sent'
+                      timestamp:
+                        type: integer
+                        format: int64
+                        description: Unix timestamp when the request was sent
+                        example: 1640995200
+                      count:
+                        type: integer
+                        description: Number of messages requested for sync
+                        example: 50
+                      chat_jid:
+                        type: string
+                        description: JID of the chat being synced
+                        example: 120363313346913103@g.us
+                      oldest_msg_id:
+                        type: string
+                        description: ID of the oldest message for sync
+                        example: ABC123DEF456
+                      oldest_msg_from_me:
+                        type: boolean
+                        description: Whether the oldest message was from the user
+                        example: true
+                      oldest_msg_timestamp:
+                        type: integer
+                        format: int64
+                        description: Timestamp of the oldest message in milliseconds
+                        example: 1640995200000
+                example:
+                  code: 200
+                  success: true
+                  data:
+                    details: 'History sync request Sent'
+                    timestamp: 1640995200
+                    count: 50
+                    chat_jid: '120363313346913103@g.us'
+                    oldest_msg_id: 'ABC123DEF456'
+                    oldest_msg_from_me: true
+                    oldest_msg_timestamp: 1640995200000
+        '400':
+          description: Bad request or session not connected
+        '500':
+          description: Internal server error
+  /session/hmac/config:
+    post:
+      tags:
+        - Session 
+      summary: Configure HMAC key for webhook signing
+      description: "Sets HMAC key for webhook signature verification. Once configured, all webhooks will include x-hmac-signature header.\n\n**Security Notes:**\n- HMAC key must be at least 32 characters long\n- Key cannot be retrieved after saving\n- To update key, send new request with new key"
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hmac_key:
+                  type: string
+                  description: HMAC key for webhook signing (min 32 chars)
+                  example: "your_hmac_key_minimum_32_characters_long_here"
+              required:
+                - hmac_key
+      responses:
+        200:
+          description: HMAC configuration saved
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "Details": "HMAC configuration saved successfully" }, "success": true }
+        400:
+          description: Invalid HMAC key
+          content:
+            application/json:
+              schema:
+                example: { "code": 400, "data": "HMAC key must be at least 32 characters long", "success": false }
+    get:
+      tags:
+        - Session 
+      summary: Get HMAC configuration status
+      description: "Retrieves HMAC configuration status. For security reasons, the actual key is never returned - only masked with '***' if configured."
+      security:
+        - ApiKeyAuth: []
+      responses:
+        200:
+          description: HMAC status
+          content:
+            application/json:
+              schema:
+                example: { "hmac_key": "***" }
+    delete:
+      tags:
+        - Session 
+      summary: Delete HMAC configuration
+      description: "Removes HMAC configuration and disables webhook signing."
+      security:
+        - ApiKeyAuth: []
+      responses:
+        200:
+          description: HMAC configuration removed
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "Details": "HMAC configuration deleted successfully" }, "success": true }
   /user/info:
     post:
       tags:
@@ -575,6 +841,46 @@ paths:
             application/json:
               schema:
                 example: { "code": 200, "data": { "5491122223333@s.whatsapp.net": { "BusinessName": "", "FirstName": "", "Found": true, "FullName": "", "PushName": "FOP2" }, "549113334444@s.whatsapp.net": { "BusinessName": "", "FirstName": "", "Found": true, "FullName": "", "PushName": "Asternic" } } }
+  /user/lid/{phone}:
+    get:
+      tags:
+        - User
+      summary: Get JID and LID for a WhatsApp number
+      description: |
+        Returns the **JID** (WhatsApp ID) and **LID** (Linked Device ID) associated with a given phone number.
+        <br>Use this endpoint to identify contacts within WhatsApp.
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          description: Phone number in international format (without the + sign)
+          schema:
+            type: string
+            example: "5511999999999"
+      security:
+        - UserTokenAuth: []
+      responses:
+        200:
+          description: JID and LID successfully retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jid:
+                    type: string
+                    example: "5511999999999@s.whatsapp.net"
+                    description: WhatsApp JID
+                  lid:
+                    type: string
+                    example: "1234567890@lid"
+                    description: Linked Device ID
+        400:
+          description: Invalid phone number format
+        401:
+          description: Invalid or missing token
+        404:
+          description: User not found
   /chat/delete:
     post:
       tags:
@@ -730,6 +1036,125 @@ paths:
                   success:
                     type: boolean
                     example: false
+  /chat/request-unavailable-message:
+    post:
+      tags:
+        - Chat
+      summary: Request unavailable message
+      description: |
+        Requests a copy of a message that couldn't be decrypted from the sender's primary device. 
+        This is useful when you receive an encrypted message that your client was unable to decrypt.
+
+        The response to this request will come as a normal message event with the `UnavailableRequestID` field set to the request message ID. 
+        The sender's primary device will attempt to resend the message content.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chat:
+                  type: string
+                  description: Chat JID where the message was sent (e.g., "5511999999999@s.whatsapp.net" for individual chat or "120363123456789012@g.us" for group chat)
+                  example: "5511999999999@s.whatsapp.net"
+                sender:
+                  type: string
+                  description: JID of the user who sent the message
+                  example: "5511999999999@s.whatsapp.net"
+                id:
+                  type: string
+                  description: Message ID of the undecrypted message
+                  example: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+              required:
+                - chat
+                - sender
+                - id
+            examples:
+              individual_chat:
+                summary: Individual chat example
+                value:
+                  chat: "5511999999999@s.whatsapp.net"
+                  sender: "5511999999999@s.whatsapp.net"
+                  id: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+              group_chat:
+                summary: Group chat example
+                value:
+                  chat: "120363123456789012@g.us"
+                  sender: "5511999999999@s.whatsapp.net"
+                  id: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+      responses:
+        200:
+          description: Unavailable message request sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  data:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+                        example: true
+                      message:
+                        type: string
+                        example: "Unavailable message request sent successfully"
+                      request_id:
+                        type: string
+                        example: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+                      chat:
+                        type: string
+                        example: "5511999999999@s.whatsapp.net"
+                      sender:
+                        type: string
+                        example: "5511999999999@s.whatsapp.net"
+                      message_id:
+                        type: string
+                        example: "3EB0C767D2B2B2B2B2B2B2B2B2B2B2B2B2"
+                      timestamp:
+                        type: integer
+                        example: 1640995200
+                  success:
+                    type: boolean
+                    example: true
+        400:
+          description: Bad Request - Missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 400
+                  error:
+                    type: string
+                    example: "missing Chat in Payload"
+                  success:
+                    type: boolean
+                    example: false
+        500:
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 500
+                  error:
+                    type: string
+                    example: "failed to send unavailable message request: context deadline exceeded"
+                  success:
+                    type: boolean
+                    example: false
   /chat/send/image:
     post:
       tags:
@@ -845,7 +1270,7 @@ paths:
       tags:
         - Chat 
       summary: Sends a sticker message
-      description: Sends a sticker message (must be base64 encoded in image/webp format)
+      description: Sends a sticker message (must be base64 encoded in image/webp or video/mp4 format)
       security:
         - ApiKeyAuth: []
       requestBody:
@@ -982,7 +1407,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -991,6 +1416,28 @@ paths:
             application/json:
               schema:
                 example: {"code":200,"data":{"Data":"data:image/jpeg;base64,iVBORw0KGgoA5CYII...=","Mimetype":"image/jpeg"},"success":true}
+  /chat/downloadsticker:
+    post:
+      tags:
+        - Chat
+      summary: Downloads Sticker from message
+      description: Downloads a Sticker from a message and returns it Base64 media encoded
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/DownloadMedia'
+
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: {"code":200,"data":{"Data":"data:image/webp;base64,iVBORw0KGgoA5CYII...=","Mimetype":"image/webp"},"success":true}
   /chat/downloadvideo:
     post:
       tags:
@@ -1004,7 +1451,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1026,7 +1473,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/definitions/DownloadImage'
+              $ref: '#/definitions/DownloadMedia'
 
       responses:
         200:
@@ -1035,6 +1482,28 @@ paths:
             application/json:
               schema:
                 example: {"code":200,"data":{"Data":"data:application/pdf;base64,iVBORw0KGgoA5CYII...=","Mimetype":"application/pdf"},"success":true}
+  /chat/downloadaudio:
+    post:
+      tags:
+        - Chat
+      summary: Downloads Audio from message
+      description: Downloads an Audio file from a message and returns it Base64 media encoded
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/DownloadMedia'
+
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: {"code": 200, "data": {"Data": "data:audio/ogg;base64,T2dnUwACAAAAAAA...=", "Mimetype": "audio/ogg"}, "success": true}
   /chat/presence:
     post:
       tags:
@@ -1057,6 +1526,146 @@ paths:
             application/json:
               schema:
                 example: { "code": 200, "data": { "Details": "Chat presence set successfuly" }, "success": true } 
+  /chat/history:
+    get:
+      tags:
+        - Chat
+      summary: Get chat message history
+      description: Retrieves message history for a specific chat. Returns messages in reverse chronological order (newest first). Requires message history to be enabled on the server.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: chat_jid
+          in: query
+          required: true
+          description: The JID (WhatsApp ID) of the chat to retrieve history for
+          schema:
+            type: string
+            example: "5491155553333@s.whatsapp.net"
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of messages to retrieve (default is 50)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+            example: 100
+      responses:
+        200:
+          description: Message history retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/definitions/HistoryMessage'
+                example:
+                  code: 200
+                  success: true
+                  data:
+                    - id: 1
+                      user_id: "abc123def456"
+                      chat_jid: "5491155553333@s.whatsapp.net"
+                      sender_jid: "5491155554444@s.whatsapp.net"
+                      message_id: "3EB0C767D26A1B5F7C83"
+                      timestamp: "2023-12-01T15:30:00Z"
+                      message_type: "text"
+                      text_content: "Hello, how are you?"
+                      media_link: ""
+                    - id: 2
+                      user_id: "abc123def456"
+                      chat_jid: "5491155553333@s.whatsapp.net"
+                      sender_jid: "5491155553333@s.whatsapp.net"
+                      message_id: "4FB1D878E37B2C6G8D94"
+                      timestamp: "2023-12-01T15:25:00Z"
+                      message_type: "image"
+                      text_content: "Check out this photo!"
+                      media_link: "https://example.com/media/image123.jpg"
+        400:
+          description: Bad request - missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                example: { "code": 400, "error": "chat_jid is required", "success": false }
+        501:
+          description: Not implemented - message history is disabled
+          content:
+            application/json:
+              schema:
+                example: { "code": 501, "error": "message history is disabled", "success": false }
+        500:
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                example: { "code": 500, "error": "failed to get message history", "success": false }
+  /status/set/text:
+    post:
+      tags:
+        - Status
+      summary: Set status message
+      description: Updates the current user's status text, which is shown in the "About" section in the user profile.
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/StatusText'
+
+      responses:
+        200:
+          description: Response
+          content:
+            application/json:
+              schema:
+                example: {"code":200,"data":{"Details":"Set"},"success":true}
+
+  /call/reject:
+    post:
+      tags:
+        - Call
+      summary: Reject an incoming call
+      description: Rejects an incoming WhatsApp call from a specific user. Requires the caller's JID and the call ID.
+      security:
+        - ApiKeyAuth: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/definitions/RejectCall'
+      responses:
+        200:
+          description: Call rejected successfully
+          content:
+            application/json:
+              schema:
+                example: { "code": 200, "data": { "Details": "Call rejected", "CallID": "ABCD1234567890" }, "success": true }
+        400:
+          description: Bad Request - Missing or invalid parameters
+          content:
+            application/json:
+              schema:
+                example: { "code": 400, "error": "missing call_from in Payload", "success": false }
+        500:
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                example: { "code": 500, "error": "error rejecting call: connection failed", "success": false }
   /group/create:
     post:
       tags:
@@ -1378,6 +1987,29 @@ paths:
                 example: { "code": 200, "data": { "Details": "Participants updated successfully" }, "success": true }
 
 definitions:
+  ContextInfo:
+    type: object
+    description: "Optional context info for replies"
+    properties:
+      StanzaId:
+        type: string
+        example: "3EB06F9067F80BAB89FF"
+        description: "Message ID to reply to"
+      Participant:
+        type: string
+        example: "5491155553935@s.whatsapp.net"
+        description: "JID of original message sender"
+      IsForwarded:
+        type: boolean
+        example: true
+        description: "Set to true to mark the message as forwarded. This is the preferred method for forwarding messages."
+      MentionedJID:
+        type: array
+        items:
+          type: string
+        example:
+          ["5491155553935@s.whatsapp.net", "5491155553936@s.whatsapp.net"]
+        description: "Array of JIDs to mention in the message. Use full WhatsApp JID format (number@s.whatsapp.net)."
   User:
     type: object
     properties:
@@ -1505,6 +2137,11 @@ definitions:
             type: integer
             example: 30
             description: "Retention days for the user, default is 30"
+      history:
+        type: integer
+        example: 0
+        description: "Number of messages to store in history per chat for this user. 0 means no history is saved, any positive number enables history storage for that many messages per chat. Default is 0"
+        default: 0
 
   DeleteUser:
     type: object
@@ -1512,6 +2149,46 @@ definitions:
       id:
         type: string
         example: 4e4942c7dee1deef99ab8fd9f7350de5
+  HistoryMessage:
+    type: object
+    properties:
+      id:
+        type: integer
+        description: "Unique identifier for the message in the history database"
+        example: 1
+      user_id:
+        type: string
+        description: "ID of the user who owns this message history"
+        example: "abc123def456"
+      chat_jid:
+        type: string
+        description: "WhatsApp JID of the chat where this message was sent/received"
+        example: "5491155553333@s.whatsapp.net"
+      sender_jid:
+        type: string
+        description: "WhatsApp JID of the user who sent this message"
+        example: "5491155554444@s.whatsapp.net"
+      message_id:
+        type: string
+        description: "WhatsApp message ID"
+        example: "3EB0C767D26A1B5F7C83"
+      timestamp:
+        type: string
+        format: date-time
+        description: "Timestamp when the message was sent/received"
+        example: "2023-12-01T15:30:00Z"
+      message_type:
+        type: string
+        description: "Type of message (text, image, audio, video, document, sticker, contact, location, etc.)"
+        example: "text"
+      text_content:
+        type: string
+        description: "Text content of the message (for text messages or captions)"
+        example: "Hello, how are you?"
+      media_link:
+        type: string
+        description: "Link to media file (for media messages)"
+        example: "https://example.com/media/image123.jpg"
   GroupPhoto:
     type: object
     properties:
@@ -1545,7 +2222,7 @@ definitions:
         example: ["Message","ChatPresence"]
       Immediate:
         type: boolean
-  DownloadImage:
+  DownloadMedia:
     type: object
     required:
       - Url
@@ -1583,6 +2260,14 @@ definitions:
       Media: 
         type: string
         example: audio
+  StatusText:
+    type: object
+    required:
+      - body
+    properties:
+      body:
+        type: string
+        example: Hi
   UserPresence:
     type: object
     required:
@@ -1611,17 +2296,7 @@ definitions:
         type: string
         example: "BEGIN:VCARD\nVERSION:3.0\nN:Doe;John;;;\nFN:John Doe\nORG:Example.com Inc.;\nTITLE:Imaginary test person\nEMAIL;type=INTERNET;type=WORK;type=pref:johnDoe@example.org\nTEL;type=WORK;type=pref:+1 617 555 1212\nTEL;type=WORK:+1 (617) 555-1234\nTEL;type=CELL:+1 781 555 1212\nTEL;type=HOME:+1 202 555 1212\nitem1.ADR;type=WORK:;;2 Enterprise Avenue;Worktown;NY;01111;USA\nitem1.X-ABADR:us\nitem2.ADR;type=HOME;type=pref:;;3 Acacia Avenue;Hoitem2.X-ABADR:us\nEND:VCARD"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
 
 
   MessageLocation:
@@ -1647,17 +2322,7 @@ definitions:
         type: float
         example: 2.294481
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   ReactionText:
     type: object
     required: 
@@ -1777,26 +2442,24 @@ definitions:
       Body:
         type: string
         example: How you doin
+      LinkPreview:
+        type: boolean
+        description: "Set to true to enable link preview generation (default is false)"
+        example: true
       Id:
         type: string
         example: "ABCDABCD1234"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
+      QuotedText:
+        type: string
+        description: "Text content of the message being replied to (for displaying quote preview)"
+        example: "Original message text"
   MessageImage:
     type: object
     required: 
       - Phone
-      - Image 
+      - Image
     properties:
       Phone:
         type: string
@@ -1811,20 +2474,10 @@ definitions:
         type: string
         example: "ABCDABCD1234"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageAudio:
     type: object
-    required: 
+    required:
       - Phone
       - Audio
     properties:
@@ -1837,18 +2490,24 @@ definitions:
       Id:
         type: string
         example: "ABCDABCD1234"
+      PTT:
+        type: boolean
+        example: true
+      MimeType:
+        type: string
+        example: "audio/ogg; codecs=opus"
+      Seconds:
+        type: integer
+        format: uint32
+        example: 15
+      Waveform:
+        type: array
+        items:
+          type: integer
+          format: byte
+        example: [0, 0, 0, 12, 20, 20, 22, 10, 5, 0, 0, 0]
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageVideo:
     type: object
     required: 
@@ -1871,17 +2530,7 @@ definitions:
         type: string
         example: "AA00D010"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageSticker:
     type: object
     required: 
@@ -1900,20 +2549,26 @@ definitions:
       PngThumbnail:
         type: string
         example: "AA00D010"
+      MimeType:
+        type: string
+        example: "image/webp"
+      PackId:
+        type: string
+        example: "my.sticker.pack.id"
+      PackName:
+        type: string
+        example: "My Pack"
+      PackPublisher:
+        type: string
+        example: "Wuzapi"
+      Emojis:
+        type: array
+        items:
+          type: string
+        example: ["😀", "🎉"]
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId: 
-            type: string
-            example: "3EB06F9067F80BAB89FF" 
-          Participant: 
-            type: string
-            example: "5491155553935@s.whatsapp.net"
- 
-
+        $ref: "#/definitions/ContextInfo"
+        description: "Optional context info for replies, mentions, and forwarding"
   MessageDocument:
     type: object
     required: 
@@ -1934,23 +2589,16 @@ definitions:
         type: string
         example: "ABCDABCD1234"
       ContextInfo:
-        type: object
-        required:
-          - StanzaId
-          - Participant
-        properties:
-          StanzaId:
-            type: string
-            example: "3EB06F9067F80BAB89FF"
-          Participant:
-            type: string
-            example: "5491155553935@s.whatsapp.net"
+        $ref: "#/definitions/ContextInfo"
   MessageTemplate:
     type: object
     required: 
       - Phone
       - Content 
     properties:
+      Id:
+        type: string
+        example: "ABCDABCD1234"
       Phone:
         type: string
         example: "5491155553935"
@@ -1969,9 +2617,6 @@ definitions:
               example: Text for Button
             Type:
               type: quickreply|url|call
-      Id:
-        type: string
-        example: "ABCDABCD1234"
       ContextInfo:
         type: object
         required:
@@ -1988,10 +2633,14 @@ definitions:
     type: object
     required:
       - Id
+      - Phone
     properties:
       Id:
         type: string
         example: "1234-abcd-21234"
+      Phone:
+        type: string
+        example: "5491155553934"
   Markread:
     type: object
     required:
@@ -2001,12 +2650,26 @@ definitions:
       Id:
         type: object
         example: ["AABBCC11223344","DDEEFF55667788"]
-      Chat:
+      ChatPhone:
         type: string
-        example: 5491155553934.0:1@s.whatsapp.net
-      Sender:
+        example: "5491155553934"
+      SenderPhone:
         type: string
-        example: 5491155553111.0:1@s.whatsapp.net
+        example: "5491155553111"
+  RejectCall:
+    type: object
+    required:
+      - call_from
+      - call_id
+    properties:
+      call_from:
+        type: string
+        description: The JID (WhatsApp ID) of the caller to reject
+        example: "5491155553934@s.whatsapp.net"
+      call_id:
+        type: string
+        description: The unique identifier of the call to reject
+        example: "ABCD1234567890EFGH"
   Pairphone:
     type: object
     required:
